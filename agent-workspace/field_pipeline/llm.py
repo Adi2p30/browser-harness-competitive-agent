@@ -1,0 +1,76 @@
+"""Minimal client for Purdue RCAC GenAI Studio (OpenAI-compatible chat completions)."""
+import json
+import logging
+import os
+import re
+import threading
+import time
+from pathlib import Path
+
+import requests
+
+API_URL = os.environ.get("RCAC_API_URL", "https://genai.rcac.purdue.edu/api/chat/completions")
+MODEL = os.environ.get("RCAC_MODEL", "gpt-oss:120b")
+TIMEOUT, RETRIES = 180, 5
+LOG_PATH: Path | None = None  # every prompt/reply appended here as JSONL when set
+_log_lock = threading.Lock()
+log = logging.getLogger(__name__)
+
+
+def api_key() -> str:
+    if not os.environ.get("RCAC_API_KEY"):
+        env = Path(__file__).resolve().parents[2] / ".env"
+        if env.is_file():
+            for line in env.read_text().splitlines():
+                k, _, v = line.partition("=")
+                if k.strip() == "RCAC_API_KEY" and v.strip():
+                    os.environ["RCAC_API_KEY"] = v.strip().strip("\"'")
+    if not os.environ.get("RCAC_API_KEY"):
+        raise RuntimeError("RCAC_API_KEY missing: add it to .env in the repo root")
+    return os.environ["RCAC_API_KEY"]
+
+
+def chat(prompt: str) -> str:
+    headers = {"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"}
+    body = {"model": MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    delay, started = 3, time.time()
+    for attempt in range(1, RETRIES + 1):
+        try:
+            resp = requests.post(API_URL, headers=headers, json=body, timeout=TIMEOUT)
+            if resp.status_code in (401, 403):
+                raise RuntimeError(f"RCAC rejected the API key (HTTP {resp.status_code})")
+            if resp.ok:
+                content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+                if content:
+                    _record(prompt, content, time.time() - started)
+                    return content
+                log.warning("RCAC returned empty content (attempt %d)", attempt)
+            else:
+                log.warning("RCAC HTTP %s (attempt %d): %s", resp.status_code, attempt, resp.text[:200])
+        except requests.RequestException as exc:
+            log.warning("RCAC request error (attempt %d): %s", attempt, exc)
+        time.sleep(delay)
+        delay = min(delay * 2, 60)
+    _record(prompt, None, time.time() - started)
+    raise RuntimeError("RCAC failed after retries")
+
+
+def chat_json(prompt: str) -> dict:
+    """chat() and parse the first JSON object in the reply; one retry on unparseable output."""
+    for _ in range(2):
+        text = re.sub(r"```(?:json)?", "", chat(prompt))
+        start = text.find("{")
+        if start >= 0:
+            try:
+                return json.JSONDecoder().raw_decode(text[start:])[0]
+            except json.JSONDecodeError:
+                pass
+        log.warning("unparseable RCAC reply: %r", text[:200])
+    return {}
+
+
+def _record(prompt: str, reply: str | None, seconds: float) -> None:
+    if LOG_PATH:
+        with _log_lock, LOG_PATH.open("a") as f:
+            f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "model": MODEL,
+                                "seconds": round(seconds, 1), "prompt": prompt, "reply": reply}) + "\n")
