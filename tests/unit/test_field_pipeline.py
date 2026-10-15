@@ -160,3 +160,13 @@ def test_start_path_never_foreign():
     assert foreign_program("https://www.gradcollege.txst.edu/programs/msw.html", w, start)
     lib = "https://www.liberty.edu/online/business/masters/mba/economics"
     assert not foreign_program("https://www.liberty.edu/online/business/masters/mba/", program_words("MBA ECONOMICS"), lib)
+
+
+def test_section_scoring_avoids_other_schools():
+    from field_pipeline.discover import section_bonus
+    start = "https://www.american.edu/cas/economics/ms/online.cfm"
+    assert section_bonus("https://www.american.edu/cas/economics/ms/tuition.cfm", start) > 0
+    assert section_bonus("https://www.american.edu/wcl/career/", start) < 0
+    assert section_bonus("https://www.american.edu/admissions/graduate-admissions/index.cfm", start) == 0
+    w = program_words("APPLIED ECONOMICS")
+    assert score("https://www.american.edu/wcl/career/", "Career", "experience", w, start) <= 0

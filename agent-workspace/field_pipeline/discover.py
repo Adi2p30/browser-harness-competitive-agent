@@ -52,6 +52,23 @@ def foreign_program(url: str, words: set[str], start: str = "") -> bool:
     return bool(parsed.path[m.end():].strip("/")) and not any(w in rest for w in words)
 
 
+# First path segments that are university-wide offices (fine to visit from any program); any other first segment
+# that differs from the start link's is probably another school's section (e.g. /wcl/ = law school).
+SHARED_SECTIONS = re.compile(r"^(admissions?|graduate|grad|financial|finaid|financial-aid|tuition|bursar|student-?accounts|"
+                             r"careers?|career-center|students?|student-affairs|student-life|international|provost|"
+                             r"registrar|academics|online|about|diversity|inclusion|belonging|cost|aid)$", re.I)
+
+
+def section_bonus(url: str, start: str) -> int:
+    u, s = urlparse(url), urlparse(start)
+    if u.netloc != s.netloc:
+        return 0
+    first = lambda p: (p.path.strip("/").split("/") or [""])[0]
+    if first(u) == first(s):
+        return 3
+    return 0 if not first(u) or SHARED_SECTIONS.match(first(u)) else -6
+
+
 def score(url: str, anchor: str, group: str, words: set[str], start: str) -> float:
     if NOISE.search(url) or UNDERGRAD_URL.search(f"{url} {anchor}") or foreign_program(url, words, start):
         return -10
@@ -60,6 +77,7 @@ def score(url: str, anchor: str, group: str, words: set[str], start: str) -> flo
     s += 2 * sum(1 for w in words if w in urlparse(url).path.casefold().replace("-", ""))
     if urlparse(url).netloc == urlparse(start).netloc:
         s += 2  # program's own (sub)site
+    s += section_bonus(url, start)
     s -= 4 * len(OLD_YEAR.findall(url))
     if url.lower().endswith(".pdf"):
         s += 1 if group in ("cost", "admissions", "profile", "outcomes") else -2
@@ -143,6 +161,8 @@ class Discoverer:
     def get(self, url: str) -> dict:
         url = clean_url(url)
         page = self.store.page(url)
+        if page is not None and page["status"] != "ok" and page.get("via") != "browser" and self.fetcher.use_browser:
+            page = None  # failed over plain HTTP before; give the browser a try
         if page is None:
             page = self.fetcher.fetch(url)
             self.store.save_page(page)

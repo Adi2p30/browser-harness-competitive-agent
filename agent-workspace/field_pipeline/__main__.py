@@ -64,7 +64,10 @@ def main() -> None:
     ap.add_argument("--sheet", action="append", help="sheet to fill (repeatable); default: every program sheet")
     ap.add_argument("--only", action="append", help="only rows whose university contains this text (repeatable)")
     ap.add_argument("--limit", type=int, help="stop after this many rows")
-    ap.add_argument("--no-browser", action="store_true", help="plain HTTP only (no browser-harness)")
+    ap.add_argument("--browser", choices=("auto", "cloud", "local", "none"), default="auto",
+                    help="cloud = Browser Use Cloud (needs BROWSER_USE_API_KEY), local = your Chrome, none = plain HTTP; "
+                         "auto = cloud if the key is set, else local")
+    ap.add_argument("--cloud-minutes", type=int, default=120, help="cloud browser hard timeout (default 120)")
     ap.add_argument("--no-search", action="store_true", help="skip Bing search through the browser")
     ap.add_argument("--per-group", type=int, default=4, help="pages opened per field group in round 1 (default 4)")
     ap.add_argument("--reextract", action="store_true", help="ask the LLM again even if results are stored")
@@ -79,7 +82,14 @@ def main() -> None:
     setup_logging(out_dir, args.verbose)
     llm.api_key()  # fail fast without a key
     store = Store(args.db) if args.db else Store()
-    fetcher = Fetcher(use_browser=not args.no_browser)
+    fetcher = Fetcher(args.browser, args.cloud_minutes)
+    try:
+        run(args, src, out_dir, store, fetcher)
+    finally:
+        fetcher.close()
+
+
+def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
     discoverer = Discoverer(store, fetcher, per_group=args.per_group, use_search=not args.no_search)
     today = date.today().isoformat()
 

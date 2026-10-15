@@ -76,16 +76,26 @@ def pdf_text(data: bytes) -> str:
     return "\n".join((p.extract_text() or "") for p in reader.pages[:MAX_PDF_PAGES])
 
 
+CLOUD_NAME = "fieldpipe"  # BU_NAME of the Browser Use cloud daemon this pipeline starts and stops
+
+
 class Fetcher:
-    def __init__(self, use_browser: bool = True):
-        self.use_browser = use_browser
+    def __init__(self, mode: str = "auto", cloud_minutes: int = 120):
+        """mode: cloud (Browser Use Cloud), local (your Chrome), none (plain HTTP), or auto (cloud if
+        BROWSER_USE_API_KEY is set, else local)."""
+        if mode == "auto":
+            mode = "cloud" if _env_has("BROWSER_USE_API_KEY") else "local"
+        self.mode = mode
+        self.use_browser = mode != "none"
+        self.cloud_minutes = cloud_minutes
+        self.cloud_started = False
         self.browser_ok = 0
         self.browser_fail = 0
         self._h = None
         self._tab = None
         self._lock = threading.Lock()
 
-    # browser-harness, wired to the same daemon the repo's ./browser-harness launcher uses
+    # browser-harness, wired to the same runtime dirs the repo's ./browser-harness launcher uses
     def _harness(self):
         if self._h is None:
             root = Path(__file__).resolve().parents[2]
@@ -95,11 +105,31 @@ class Fetcher:
             os.environ.setdefault("BH_RUNTIME_DIR_SHARED", "1")
             os.environ.setdefault("BH_TMP_DIR", str(root / ".browser-harness-dev" / "tmp"))
             os.environ.setdefault("BH_TMP_DIR_SHARED", "1")
-            from browser_harness import helpers
-            from browser_harness.admin import ensure_daemon
-            ensure_daemon()
+            if self.mode == "cloud":
+                os.environ["BU_NAME"] = CLOUD_NAME  # helpers bind to the daemon named at import time
+                os.environ.setdefault("BH_OPEN_LIVE_URL", "0")
+            from browser_harness import admin, helpers
+            if self.mode == "cloud":
+                if not admin.daemon_alive(CLOUD_NAME):
+                    browser = admin.start_remote_daemon(CLOUD_NAME, timeout=self.cloud_minutes)
+                    self.cloud_started = True
+                    log.info("Browser Use cloud browser started (id %s, auto-stops after %d min); live view: %s",
+                             browser.get("id"), self.cloud_minutes, browser.get("liveUrl"))
+            else:
+                admin.ensure_daemon()
             self._h = helpers
         return self._h
+
+    def close(self) -> None:
+        """Stop the cloud browser this fetcher started (cloud browsers bill until stopped)."""
+        if self.cloud_started:
+            from browser_harness import admin
+            try:
+                admin.stop_remote_daemon(CLOUD_NAME)
+                log.info("Browser Use cloud browser stopped")
+            except Exception as exc:
+                log.error("could not stop cloud browser %r: %s -- stop it in the Browser Use dashboard", CLOUD_NAME, exc)
+            self.cloud_started = False
 
     def browser(self):
         """The harness helpers with this fetcher's tab active, or None if the browser is unusable."""
@@ -180,6 +210,14 @@ class Fetcher:
             return {"url": url, "status": "unreadable"}
         status = "ok" if len(got["text"]) >= MIN_TEXT else "empty"
         return {"url": url, "status": status, **got}
+
+
+def _env_has(key: str) -> bool:
+    if os.environ.get(key):
+        return True
+    env = Path(__file__).resolve().parents[2] / ".env"
+    return env.is_file() and any(line.split("=", 1)[0].strip() == key and line.split("=", 1)[1].strip()
+                                 for line in env.read_text().splitlines() if "=" in line)
 
 
 def is_same_site(url: str, start: str) -> bool:
