@@ -43,6 +43,8 @@ Useful variations:
 | Ask the LLM again for schools already done | `--reextract` |
 | Also research cells that already have a value | `--overwrite` |
 | Skip the Bing search step | `--no-search` |
+| Text chunks per LLM call (default 10) | `--chunks 12` |
+| Skip the second LLM pass for missing fields | `--no-second-pass` |
 | More detail in the terminal | `-v` |
 
 Every web page is opened in a real browser through browser-harness (plain HTTP is only used for PDFs and
@@ -77,6 +79,7 @@ Statuses in `decisions.csv`:
 | `off-cycle` | Value is for a year other than 2026-2027 | blank + comment |
 | `other-program` | Value is for another program, undergrad, or school-wide where it must be program-specific | blank + comment |
 | `bad-quote` | Model's quote is not on the page (paraphrase or invention) | blank + comment |
+| `bad-source` | Ranking value not from (or naming) its publisher | blank + comment |
 | `bad-value` / `out-of-range` | Value doesn't match its quote, or is implausible (e.g. GPA 35) | blank + comment |
 | `no-start-link` | Row has no Website Link | blank |
 
@@ -95,14 +98,19 @@ workbook -> 1 discover -> 2 fetch -> 3 chunk -> 4 retrieve -> 5 extract -> 6 val
      hits per group are opened. Engines that show a CAPTCHA are switched off for the run (never solved).
    - **crawl** outward from the start link and the found pages, plus the school's sitemap; URLs are scored per
      field group and each group gets its own best pages.
+   - **rankings**: each ranking column searches its publisher (usnews.com, best-masters.com,
+     topuniversities.com) and opens the top results there; the school's own "rankings" pages are used too.
    - Undergraduate pages, other programs' pages and other schools' sections of the site are skipped.
 2. **fetch** (`fetch.py`): browser-harness renders the page and opens accordions/tabs; plain HTTP is the fallback;
    PDFs are read with pypdf.
 3. **chunk** (`retrieve.py`): pages -> ~1,500-character chunks; duplicate pages dropped.
-4. **retrieve** (`retrieve.py`): BM25 ranks chunks per field group; the top 6 go to the model.
-5. **extract** (`extract.py`): one RCAC call per field group (about 8 per school, not one per cell).
+4. **retrieve** (`retrieve.py`): BM25 ranks chunks per field group; the top 10 go to the model.
+5. **extract** (`extract.py`): one RCAC call per field group: 16 narrow groups (test scores, class makeup,
+   tuition, aid, deadlines, requirements, structure, campus, experiential, community, career, outcomes, basics,
+   and one per ranking publisher), so about 16 calls per school. Fields still missing get a **second pass** on the
+   next 10 chunks (about 8-12 more calls).
 6. **validate** (`validate.py`): quote must be on the page, value's numbers in the quote, value in range,
-   2026-2027 cycle only, right program.
+   2026-2027 cycle only, right program; ranking values must come from (or name) their publisher.
 7. **write** (`workbook.py`, `__main__.py`).
 
 Columns, their groups, definitions and valid ranges are in `fields.py`. To support a new column, add a `Field`
@@ -120,6 +128,9 @@ uv run --with pytest --with openpyxl --with beautifulsoup4 --with requests --wit
 ## Known limits
 
 - Rows without a Website Link are skipped (fill the link in the workbook).
+- If Browser Use runs out of credits (HTTP 402) the run stops cleanly and writes everything finished; rerun
+  later (or with `--browser local`) to continue.
+- usnews.com is strict with automated browsers; U.S. News values often come from the school quoting its rank.
 - DuckDuckGo shows a CAPTCHA to the cloud browser, so it is effectively off; Bing works but ignores `site:`,
   which is why queries use the university name instead.
 - Class-profile, outcomes and ranking fields are often not published on schools' own pages.
