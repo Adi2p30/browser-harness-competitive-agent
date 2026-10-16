@@ -19,18 +19,18 @@ def f(col):
 
 
 @pytest.mark.parametrize("col,group,kind", [
-    ("International (%)", "profile", "percent"),
-    ("International %", "profile", "percent"),
-    ("International Tuition Per Credit", "cost", "money"),
-    ("Female (%)", "profile", "percent"),
-    ("Avg GMAT", "profile", "gmat"),
-    ("Accept 3yr-degree from India? (Y/N)", "admissions", "yesno"),
-    ("Affinity Groups (brief description)", "experience", "text"),
-    ("Affinity Groups (Yes/No)", "experience", "yesno"),
-    ("Co-op / Internship Opportunities (Brief Description)", "experience", "text"),
-    ("Co-op / Internship Opportunities (Yes/No)", "experience", "yesno"),
+    ("International (%)", "class", "percent"),
+    ("International %", "class", "percent"),
+    ("International Tuition Per Credit", "tuition", "money"),
+    ("Female (%)", "class", "percent"),
+    ("Avg GMAT", "scores", "gmat"),
+    ("Accept 3yr-degree from India? (Y/N)", "requirements", "yesno"),
+    ("Affinity Groups (brief description)", "community", "text"),
+    ("Affinity Groups (Yes/No)", "community", "yesno"),
+    ("Co-op / Internship Opportunities (Brief Description)", "experiential", "text"),
+    ("Co-op / Internship Opportunities (Yes/No)", "experiential", "yesno"),
     ("Delivery Model (Led by Full Time faculty or Part Time Adjuncts?)", "structure", "text"),
-    ("Ranking (USNews)", "rankings", "text"),
+    ("Ranking (USNews)", "rank_usnews", "text"),
 ])
 def test_field_mapping(col, group, kind):
     assert (f(col).group, f(col).kind) == (group, kind)
@@ -100,9 +100,9 @@ def test_site():
 def test_score_prefers_group_pages():
     start = "https://business.purdue.edu/online/ms-economics/"
     w = program_words("Online MS Economics")
-    tuition = score("https://business.purdue.edu/online/tuition/", "Tuition & Fees", "cost", w, start)
-    news = score("https://business.purdue.edu/news/2021/story", "Story", "cost", w, start)
-    old = score("https://business.purdue.edu/tuition-2019/", "Tuition", "cost", w, start)
+    tuition = score("https://business.purdue.edu/online/tuition/", "Tuition & Fees", "tuition", w, start)
+    news = score("https://business.purdue.edu/news/2021/story", "Story", "tuition", w, start)
+    old = score("https://business.purdue.edu/tuition-2019/", "Tuition", "tuition", w, start)
     assert tuition > old and news < 0
 
 
@@ -169,7 +169,7 @@ def test_section_scoring_avoids_other_schools():
     assert section_bonus("https://www.american.edu/wcl/career/", start) < 0
     assert section_bonus("https://www.american.edu/admissions/graduate-admissions/index.cfm", start) == 0
     w = program_words("APPLIED ECONOMICS")
-    assert score("https://www.american.edu/wcl/career/", "Career", "experience", w, start) <= 0
+    assert score("https://www.american.edu/wcl/career/", "Career", "career", w, start) <= 0
 
 
 def test_bing_redirect_decoding():
@@ -177,3 +177,21 @@ def test_bing_redirect_decoding():
     href = "https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly93d3cuYXBwbGllZC5jb20v&ntb=1"
     assert bing_target(href) == "https://www.applied.com/"
     assert bing_target("https://www.bc.edu/x") == "https://www.bc.edu/x"
+
+
+def test_ranking_needs_publisher_source():
+    us = f("Ranking (U.S. News)")
+    page = "Ranked No. 25 in Best Online Master's in Business Programs by U.S. News & World Report. Ranked #3 by Fortune."
+    assert check(us, "No. 25", "Ranked No. 25 in Best Online Master's in Business Programs by U.S. News & World Report",
+                 page)[0] == "found"
+    assert check(us, "#3", "Ranked #3 by Fortune.", page)[0] == "bad-source"
+    assert check(us, "#3", "Ranked #3 by Fortune.", page, "target",
+                 "https://www.usnews.com/education/online-education/x Online Programs")[0] == "found"
+    assert check(us, "#40", "#40 National Universities", "#40 National Universities", "target",
+                 "https://www.usnews.com/best-colleges/x")[0] == "other-program"
+
+
+def test_every_field_group_exists():
+    from field_pipeline.fields import FIELDS, GROUPS
+    assert all(fl.group in GROUPS for fl in FIELDS)
+    assert {g.name for g in GROUPS.values() if g.sites} == {"rank_usnews", "rank_bestmasters", "rank_qs"}

@@ -136,15 +136,25 @@ class Searcher:
         self.stats["site"] += 1
         return out
 
-    def find(self, start: str, university: str, program: str, short: str) -> list[tuple[str, str, str]]:
-        """[(source, title, url)] from every enabled engine, school-site results only. Engines are queried with the
-        university's name rather than a site: operator (bots often get site: ignored); off-site results are dropped."""
+    def find(self, start: str, university: str, program: str, short: str,
+             sites: tuple = ()) -> list[tuple[str, str, str]]:
+        """[(source, title, url)]. Web engines are queried with the university's name (bots often get a site:
+        operator ignored). Without `sites` only results on the school's own site are kept and the school's search
+        box is tried too; with `sites` (ranking publishers) only results on those domains are kept."""
+        def wanted(u: str) -> bool:
+            host = urlparse(u).netloc.lower()
+            return any(host == d or host.endswith("." + d) for d in sites) if sites else is_same_site(u, start)
+
         q = " ".join(f"{university} {program} {short}".split())
+        engines = [("bing", lambda: self.bing(q, 10)), ("ddg", lambda: self.ddg(q, 10))]
+        if sites:  # also try the plain university name: publishers rank schools more often than single programs
+            uq = f"{university} {short} {sites[0]}"
+            engines.insert(1, ("bing", lambda: self.bing(uq, 10)))
+        else:
+            engines.append(("site", lambda: self.site_search(start, f"{program} {short}".strip())))
         hits = []
-        for engine, search in (("bing", lambda: self.bing(q, 10)), ("ddg", lambda: self.ddg(q, 10)),
-                               ("site", lambda: self.site_search(start, f"{program} {short}".strip()))):
-            results = search()
-            hits += [(engine, t, u) for t, u in results if is_same_site(u, start)]
+        for engine, search in engines:
+            hits += [(engine, t, u) for t, u in search() if wanted(u) and u not in {h[2] for h in hits}]
             if hits and engine != "site":
                 break  # one web engine is enough; try the next only if this one gave nothing
         return hits

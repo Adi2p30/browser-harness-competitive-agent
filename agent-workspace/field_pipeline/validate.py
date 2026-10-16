@@ -1,10 +1,11 @@
 """Stage 6: code checks on every extracted value. Nothing reaches the workbook without passing all of them.
 
-Statuses: found (passed every check) | off-cycle | other-program | bad-quote | bad-value | out-of-range | not-found
+Statuses: found (passed every check) | off-cycle | other-program | bad-quote | bad-value | out-of-range |
+bad-source | not-found
 """
 import re
 
-from .fields import Field
+from .fields import GROUPS, Field
 
 TARGET = (2026, 2027)  # 2026-2027 academic year: Fall 2026, Spring 2027, Summer 2027
 AY = re.compile(r"(?<!\d)(20\d\d)\s*(?:-|–|—|/|to)\s*(20\d\d|\d\d)(?!\d)")
@@ -13,9 +14,7 @@ CLASS_OF = re.compile(r"\bclass\s+of\s+(20\d\d)\b", re.I)
 YEAR = re.compile(r"(?<![\d$,.])(?<!\d-)(20\d\d)(?![\d,])")  # a bare year, not part of a number like $2,025 or 12025
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
 NUMERIC = {"number", "percent", "money", "months", "gmat", "gre", "gpa"}
-# Groups whose numbers describe one program's students/curriculum: a school- or university-wide figure is wrong.
-PROGRAM_SPECIFIC = {"profile", "outcomes", "structure"}
-UNDERGRAD = re.compile(r"\b(undergraduate|freshm[ae]n|first-year|first year class|high school|sat|act scores?)\b", re.I)
+UNDERGRAD = re.compile(r"\b(undergraduate|freshm[ae]n|first-year|first year class|high school|sat|act scores?)\b|best-colleges", re.I)
 
 
 def squash(s: str) -> str:
@@ -71,7 +70,10 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
         return "bad-quote", "quote is not on the page"
     if applies_to == "other":
         return "other-program", "model says the value is for a different program/level"
-    if applies_to != "target" and field.group in PROGRAM_SPECIFIC:
+    group = GROUPS[field.group]
+    if group.source and not (re.search(group.source, quote, re.I) or re.search(group.source, source, re.I)):
+        return "bad-source", f"neither the quote nor the page is from {group.sites[0] if group.sites else group.source}"
+    if applies_to != "target" and group.program_specific:
         return "other-program", "school-wide figure for a program-specific field"
     if UNDERGRAD.search(quote) or UNDERGRAD.search(source):
         return "other-program", "undergraduate source"

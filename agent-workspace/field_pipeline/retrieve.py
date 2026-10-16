@@ -83,8 +83,3 @@ def top_chunks(chunks: list[Chunk], query: str, k: int = 6, max_per_url: int = 3
             out.append(c)
             per[c.url] += 1
     return out
-
-
-BOOST = {"cost": r"\$\s?\d", "profile": r"\d+(\.\d+)?\s?%|\bgpa\b|\bgmat\b", "outcomes": r"\$\s?\d|\d+\s?%",
-         "admissions": r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}",
-         "structure": r"\d+\s*(credit|month|year)"}

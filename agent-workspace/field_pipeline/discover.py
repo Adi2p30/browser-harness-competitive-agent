@@ -126,12 +126,6 @@ def _read_sitemap(url: str, limit: int, depth: int) -> list[str]:
     return locs[:limit]
 
 
-# Short site-search queries per group (school search boxes match keywords, not sentences). basics needs no search.
-SITE_QUERY = {"profile": "class profile", "structure": "curriculum credit hours", "admissions": "application deadlines",
-              "cost": "tuition", "experience": "career services", "outcomes": "employment outcomes",
-              "rankings": "rankings"}
-
-
 class Discoverer:
     """Per row: 1) search (DuckDuckGo/Bing with site:<domain>, and the school's own search box) for each field
     group, opening the top hits; 2) crawl outward from the start link and the found pages, choosing links per group
@@ -167,13 +161,15 @@ class Discoverer:
             if is_same_site(url, start) and url not in pool and not urlparse(url).path.lower().endswith(SKIP_EXT):
                 pool[url] = anchor
 
-        def open_page(url: str, group: str, s: float, source: str) -> None:
+        def open_page(url: str, group: str, s: float, source: str, follow: bool = True) -> None:
             self.store.add_candidate(row_key, url, group, s, source)
             if url in done:
                 return
             done.add(url)
-            for a, link in self.get(url).get("links") or []:
-                add(link, a)
+            page = self.get(url)
+            if follow:  # outside pages (ranking sites) are read but their links are not crawled
+                for a, link in page.get("links") or []:
+                    add(link, a)
 
         open_page(clean_url(start), "*", 100, "start")
         host = urlparse(start).netloc
@@ -184,19 +180,21 @@ class Discoverer:
 
         if self.use_search:
             for group in groups:
-                if group not in SITE_QUERY:
+                g = GROUPS[group]
+                if not g.search:
                     continue
-                hits = self.searcher.find(start, university.title(), program.title(), SITE_QUERY[group])
+                hits = self.searcher.find(start, university.title(), program.title(), g.search, g.sites)
                 kept = [(src, t, clean_url(u)) for src, t, u in hits
-                        if score(clean_url(u), t, group, words, start) > -10][:self.search_hits * 2]
-                log.info("search %-10s -> %d hit(s): %s", group, len(kept), [u for _, _, u in kept][:6])
+                        if g.sites or score(clean_url(u), t, group, words, start) > -10][:self.search_hits * 2]
+                log.info("search %-16s -> %d hit(s): %s", group, len(kept), [u for _, _, u in kept][:6])
                 for rank, (src, title, url) in enumerate(kept):
-                    add(url, title)
+                    if not g.sites:
+                        add(url, title)
                     if rank < self.search_hits:
-                        open_page(url, group, 50 - rank, f"search:{src}")
+                        open_page(url, group, 50 - rank, f"search:{src}", follow=not g.sites)
 
         for k in (self.per_group, self.second_round):
-            for group in groups:
+            for group in [g for g in groups if not GROUPS[g].sites]:
                 ranked = sorted(((score(u, a, group, words, start), u) for u, a in pool.items() if u not in done),
                                 reverse=True)
                 for s, u in ranked[:k]:

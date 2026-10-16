@@ -25,7 +25,7 @@ from pathlib import Path
 from . import llm
 from .discover import Discoverer, foreign_program, program_words
 from .extract import extract_group
-from .fetch import Fetcher
+from .fetch import BrowserUnavailable, Fetcher
 from .fields import plan
 from .retrieve import chunk_pages
 from .store import Store
@@ -58,6 +58,22 @@ def money(v: str) -> float | None:
     return float(m.group().replace(",", "")) if m else None
 
 
+def extract_all(row, program: str, today: str, group_fields: dict, chunks: list, k: int, skip: int,
+                workers: int, page_text: dict[str, str]) -> dict[str, dict]:
+    """One LLM call per group (in parallel); {column: result}."""
+    found = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        jobs = {g: pool.submit(extract_group, row.university, program, today, g, fs, chunks, k, skip, page_text)
+                for g, fs in group_fields.items()}
+        for g, job in jobs.items():
+            try:
+                found.update(job.result())
+            except RuntimeError as exc:
+                log.error("group %s failed: %s", g, exc)
+                found.update({c: {"status": "llm-error", "detail": str(exc)} for c in group_fields[g]})
+    return found
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("xlsx")
@@ -77,6 +93,9 @@ def main() -> None:
     ap.add_argument("--reextract", action="store_true", help="ask the LLM again even if results are stored")
     ap.add_argument("--overwrite", action="store_true", help="research cells that already have a value")
     ap.add_argument("--workers", type=int, default=4, help="concurrent RCAC calls per row (default 4)")
+    ap.add_argument("--chunks", type=int, default=10, help="text chunks (~1,500 chars each) per LLM call (default 10)")
+    ap.add_argument("--no-second-pass", action="store_true",
+                    help="skip the second LLM pass over the next-best chunks for fields still not found")
     ap.add_argument("--db", type=Path, help="SQLite path (default field_pipeline/data/pipeline.sqlite)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
@@ -125,7 +144,13 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
         results = {c: r for c, r in stored.items() if c in wanted}
         if todo:
             fetcher.begin_school()
-            pages = discoverer.run(row.key, row.start_url, row.program or row.sheet, todo, row.university)
+            try:
+                pages = discoverer.run(row.key, row.start_url, row.program or row.sheet, todo, row.university)
+            except BrowserUnavailable as exc:
+                hint = (" -- Browser Use returned 402 Payment Required: the account is out of credits"
+                        if "402" in str(exc) else "")
+                log.error("STOPPING: %s%s. Finished schools are saved; rerun later to continue from here.", exc, hint)
+                break
             words = program_words(row.program or row.sheet)
             dropped = [p["url"] for p in pages if foreign_program(p["url"], words, row.start_url)]
             pages = [p for p in pages if p["url"] not in dropped]
@@ -135,19 +160,25 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
             log.info("%d readable page(s) (%d pdf) -> %d chunks", len(pages),
                      sum(p["kind"] == "pdf" for p in pages), len(chunks))
             program = f"{row.program or row.sheet} (workbook sheet '{row.sheet}')"
-            with ThreadPoolExecutor(max_workers=args.workers) as pool:
-                jobs = {g: pool.submit(extract_group, row.university, program, today, g,
-                                       {c: f for c, f in wanted.items() if f.group == g}, chunks) for g in todo}
-                for g, job in jobs.items():
-                    try:
-                        found = job.result()
-                    except RuntimeError as exc:
-                        log.error("group %s failed: %s", g, exc)
-                        found = {c: {"status": "llm-error", "detail": str(exc)} for c, f in wanted.items()
-                                 if f.group == g}
-                    for c, r in found.items():
-                        store.save_result(row.key, c, g, r)
-                        results[c] = r
+            group_fields = {g: {c: f for c, f in wanted.items() if f.group == g} for g in todo}
+            page_text = {p["url"]: p["text"] for p in pages}
+            found = extract_all(row, program, today, group_fields, chunks, args.chunks, 0, args.workers, page_text)
+            if not args.no_second_pass:
+                retry = {g: {c: f for c, f in fs.items() if found[c]["status"] in ("not-found", "bad-quote")}
+                         for g, fs in group_fields.items()}
+                retry = {g: fs for g, fs in retry.items() if fs}
+                if retry:
+                    log.info("second pass: %d field(s) in %d group(s) on the next-best chunks",
+                             sum(map(len, retry.values())), len(retry))
+                    again = extract_all(row, program, today, retry, chunks, args.chunks, args.chunks, args.workers,
+                                        page_text)
+                    for c, r in again.items():
+                        if r["status"] not in ("not-found", "llm-error"):
+                            r["detail"] = (r.get("detail") or "") + " [second pass]"
+                            found[c] = r
+            for c, r in found.items():
+                store.save_result(row.key, c, wanted[c].group, r)
+                results[c] = r
 
         # derived: total = per-credit x credit hours, only when the site states no total
         credits = results.get("Credit Hours", {})

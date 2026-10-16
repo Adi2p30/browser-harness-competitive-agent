@@ -3,7 +3,7 @@ import logging
 
 from . import llm
 from .fields import GROUPS, Field
-from .retrieve import BOOST, Chunk, top_chunks
+from .retrieve import Chunk, top_chunks
 from .validate import check
 
 log = logging.getLogger(__name__)
@@ -33,17 +33,25 @@ Rules:
 - Prefer 2026-2027 / Fall 2026 values. If the only value is for another year, return it anyway with that quote
   (the code labels it), but never present it as 2026-2027.
 - Undergraduate / freshman / university-wide admission statistics are "other" for a master's program.
+- Rankings: give the rank with the ranking's name and edition, e.g. "#25, Best Online Master's in Business
+  (Excluding MBA), 2026". Only a ranking of this program or its category; not the university's overall rank
+  unless the column asks for it.
 - Never add a year, term or label to a value that its quote does not state.
 - Yes/No fields: "Yes" or "No" plus a few words of evidence; "No" only if the page says it is not offered.
 - If nothing in the excerpts states a field, use {{"value": null}}."""
 
 
 def extract_group(university: str, program: str, today: str, group: str, fields: dict[str, Field],
-                  chunks: list[Chunk], k: int = 6) -> dict[str, dict]:
-    """{column: {value, status, url, quote, detail}} for every column in `fields`."""
+                  chunks: list[Chunk], k: int = 10, skip: int = 0,
+                  page_text: dict[str, str] | None = None) -> dict[str, dict]:
+    """{column: {value, status, url, quote, detail}} for every column in `fields`, from the group's best `k`
+    chunks after skipping the first `skip` (the second pass looks at the next-best chunks)."""
     g = GROUPS[group]
     query = f"{g.query} {program} " + " ".join(fields)
-    best = top_chunks(chunks, query, k=k, boost=BOOST.get(group, ""))
+    best = top_chunks(chunks, query, k=k, boost=g.boost)
+    if skip:  # second pass: the next-best chunks, never one the first pass already showed
+        seen = {c.id for c in top_chunks(chunks, query, k=skip, boost=g.boost)}
+        best = [c for c in top_chunks(chunks, query, k=skip + k, boost=g.boost, max_per_url=6) if c.id not in seen][:k]
     if not best:
         return {c: {"value": None, "status": "not-found", "detail": "no relevant text on fetched pages"} for c in fields}
     excerpts = "\n\n".join(f"[{c.id}] {c.url} ({c.title})\n{c.text}" for c in best)
@@ -58,11 +66,12 @@ def extract_group(university: str, program: str, today: str, group: str, fields:
         chunk = by_id.get(str(item.get("excerpt") or "").strip("[] "))
         if chunk is None:  # model cited no/unknown excerpt: find the excerpt that holds the quote
             chunk = next((c for c in best if quote and quote[:40].casefold() in c.text.casefold()), best[0])
-        status, detail = check(field, value, quote, f"{chunk.title}\n{chunk.text}" if chunk else "", applies_to_norm(item),
+        full = lambda c: f"{c.title}\n{(page_text or {}).get(c.url) or c.text}"  # quotes may cross chunk boundaries
+        status, detail = check(field, value, quote, full(chunk) if chunk else "", applies_to_norm(item),
                                f"{chunk.url} {chunk.title}" if chunk else "")
         if status == "bad-quote" and quote:  # quote may sit in another of the excerpts
             for c in best:
-                s2, d2 = check(field, value, quote, f"{c.title}\n{c.text}", applies_to_norm(item), f"{c.url} {c.title}")
+                s2, d2 = check(field, value, quote, full(c), applies_to_norm(item), f"{c.url} {c.title}")
                 if s2 != "bad-quote":
                     status, detail, chunk = s2, d2, c
                     break
