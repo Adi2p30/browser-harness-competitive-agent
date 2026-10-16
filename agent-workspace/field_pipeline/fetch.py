@@ -170,16 +170,34 @@ class Fetcher:
             self._stop_cloud()
 
     def browser(self):
-        """The harness helpers with this fetcher's tab active. Raises BrowserUnavailable if it cannot be reached."""
+        """The harness helpers with this fetcher's tab active. Reconnects a dropped connection (Chrome restarted,
+        laptop slept, cloud session expired) with waits of 5/20/60 s; raises BrowserUnavailable if all fail."""
         if not self.use_browser:
             return None
-        try:
-            h = self._harness()
-            self._tab = self._tab or h.new_tab()
-            h.switch_tab(self._tab)
-            return h
-        except Exception as exc:  # daemon down, Chrome not debuggable, cloud quota, ...
-            raise BrowserUnavailable(f"browser-harness ({self.mode}) unavailable: {exc}") from exc
+        last = None
+        for wait_s in (0, 5, 20, 60):
+            if wait_s:
+                log.warning("browser connection lost (%s); reconnecting in %d s", last, wait_s)
+                time.sleep(wait_s)
+                self._reset()
+            try:
+                h = self._harness()
+                if self.mode == "local" and wait_s:
+                    self._admin.ensure_daemon()  # self-heals a stale daemon / relaunches Chrome
+                self._tab = self._tab or h.new_tab()
+                h.switch_tab(self._tab)
+                return h
+            except Exception as exc:  # daemon down, Chrome closed, cloud quota, ...
+                last = exc
+                if "402" in str(exc):  # out of Browser Use credits: waiting will not help
+                    break
+        raise BrowserUnavailable(f"browser-harness ({self.mode}) unavailable: {last}") from last
+
+    def _reset(self) -> None:
+        """Drop the current tab/session so the next browser() call reconnects."""
+        self._tab = None
+        if self.mode == "cloud":
+            self._stop_cloud()
 
     def _via_browser(self, url: str, retry: bool = True) -> dict | None:
         with self._lock:
@@ -203,9 +221,9 @@ class Fetcher:
             except Exception as exc:
                 self.browser_fail += 1
                 log.warning("browser fetch failed %s: %s", url, exc)
-                if retry and self.mode == "cloud":  # the session may have expired: new session, one retry
-                    log.info("restarting cloud browser and retrying once")
-                    self._stop_cloud()
+                if retry:  # the connection/session may have dropped: reconnect, retry once
+                    log.info("reconnecting the browser and retrying once")
+                    self._reset()
                     return self._via_browser(url, retry=False)
                 return None
         if not str(final).startswith(("http://", "https://")):

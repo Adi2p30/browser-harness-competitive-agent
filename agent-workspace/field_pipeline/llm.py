@@ -11,7 +11,10 @@ import requests
 
 API_URL = os.environ.get("RCAC_API_URL", "https://genai.rcac.purdue.edu/api/chat/completions")
 MODEL = os.environ.get("RCAC_MODEL", "gpt-oss:120b")
-TIMEOUT, RETRIES = 180, 5
+TIMEOUT, RETRIES = 180, 8
+MIN_INTERVAL = 1.5  # seconds between request starts across all threads (RCAC rate-limits bursts)
+_gate = threading.Lock()
+_last_start = [0.0]
 LOG_PATH: Path | None = None  # every prompt/reply appended here as JSONL when set
 _log_lock = threading.Lock()
 log = logging.getLogger(__name__)
@@ -35,8 +38,18 @@ def chat(prompt: str) -> str:
     body = {"model": MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
     delay, started = 3, time.time()
     for attempt in range(1, RETRIES + 1):
+        with _gate:  # pace request starts so parallel groups don't burst past the rate limit
+            pause = _last_start[0] + MIN_INTERVAL - time.time()
+            if pause > 0:
+                time.sleep(pause)
+            _last_start[0] = time.time()
         try:
             resp = requests.post(API_URL, headers=headers, json=body, timeout=TIMEOUT)
+            if not resp.ok and "rate limit" in resp.text[:300].casefold():
+                wait_s = min(15 * 2 ** (attempt - 1), 240)
+                log.warning("RCAC rate limit (attempt %d); waiting %d s", attempt, wait_s)
+                time.sleep(wait_s)
+                continue
             if resp.status_code in (401, 403):
                 raise RuntimeError(f"RCAC rejected the API key (HTTP {resp.status_code})")
             if resp.ok:
