@@ -65,9 +65,13 @@ def main() -> None:
     ap.add_argument("--only", action="append", help="only rows whose university contains this text (repeatable)")
     ap.add_argument("--limit", type=int, help="stop after this many rows")
     ap.add_argument("--browser", choices=("auto", "cloud", "local", "none"), default="auto",
-                    help="cloud = Browser Use Cloud (needs BROWSER_USE_API_KEY), local = your Chrome, none = plain HTTP; "
-                         "auto = cloud if the key is set, else local")
-    ap.add_argument("--cloud-minutes", type=int, default=120, help="cloud browser hard timeout (default 120)")
+                    help="cloud = Browser Use Cloud (needs BROWSER_USE_API_KEY), local = your Chrome, none = plain HTTP "
+                         "(debugging only); auto = cloud if the key is set, else local")
+    ap.add_argument("--session-minutes", type=int, default=15, help="cloud session length limit (default 15)")
+    ap.add_argument("--schools-per-session", type=int, default=2,
+                    help="start a fresh cloud browser after this many schools (default 2)")
+    ap.add_argument("--http-fallback", action="store_true",
+                    help="if the browser cannot read an HTML page, try plain HTTP (off by default)")
     ap.add_argument("--no-search", action="store_true", help="skip Bing search through the browser")
     ap.add_argument("--per-group", type=int, default=4, help="pages opened per field group in round 1 (default 4)")
     ap.add_argument("--reextract", action="store_true", help="ask the LLM again even if results are stored")
@@ -82,7 +86,7 @@ def main() -> None:
     setup_logging(out_dir, args.verbose)
     llm.api_key()  # fail fast without a key
     store = Store(args.db) if args.db else Store()
-    fetcher = Fetcher(args.browser, args.cloud_minutes)
+    fetcher = Fetcher(args.browser, args.session_minutes, args.schools_per_session, args.http_fallback)
     try:
         run(args, src, out_dir, store, fetcher)
     finally:
@@ -120,7 +124,8 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
         todo = [g for g in groups if any(c not in stored for c, f in wanted.items() if f.group == g)]
         results = {c: r for c, r in stored.items() if c in wanted}
         if todo:
-            pages = discoverer.run(row.key, row.start_url, row.program or row.sheet, todo)
+            fetcher.begin_school()
+            pages = discoverer.run(row.key, row.start_url, row.program or row.sheet, todo, row.university)
             words = program_words(row.program or row.sheet)
             dropped = [p["url"] for p in pages if foreign_program(p["url"], words, row.start_url)]
             pages = [p for p in pages if p["url"] not in dropped]
@@ -187,7 +192,8 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
     log.info("DONE: %d cells written -> %s", written, dest)
     log.info("status counts: %s | fill rate %.0f%%", dict(tally),
              100 * (tally["found"] + tally["computed"]) / total if total else 0)
-    log.info("browser pages: %d ok, %d failed", fetcher.browser_ok, fetcher.browser_fail)
+    log.info("browser pages: %d ok, %d failed | cloud sessions: %d | searches: %s, disabled: %s", fetcher.browser_ok,
+             fetcher.browser_fail, fetcher.sessions, discoverer.searcher.stats, sorted(discoverer.searcher.disabled) or "none")
     print(f"\n{written} cells -> {dest}\ndecisions -> {out_dir / 'decisions.csv'}\n{dict(tally)}")
 
 

@@ -35,18 +35,25 @@ Useful variations:
 | First N rows only | `--limit 3` |
 | Several sheets | `--sheet "Online MS Economics" --sheet "Online MSGSCM"` |
 | Every sheet | leave out `--sheet` |
-| No browser, fastest/cheapest | `--browser none` |
 | Your own Chrome instead of the cloud | `--browser local` (enable `chrome://inspect/#remote-debugging` first) |
+| Schools per cloud session (default 2) | `--schools-per-session 3` |
+| Cloud session length limit (default 15 min) | `--session-minutes 15` |
+| Allow plain HTTP when the browser can't read a page | `--http-fallback` |
+| Debugging only: no browser at all | `--browser none` |
 | Ask the LLM again for schools already done | `--reextract` |
 | Also research cells that already have a value | `--overwrite` |
 | Skip the Bing search step | `--no-search` |
 | More detail in the terminal | `-v` |
 
-`--browser auto` (the default) uses the Browser Use cloud browser when `BROWSER_USE_API_KEY` is set, else your
-local Chrome. The cloud browser bills while open; the pipeline always stops it at the end (also on Ctrl-C), and
-`--cloud-minutes` (default 120) is a hard limit.
+Every web page is opened in a real browser through browser-harness (plain HTTP is only used for PDFs and
+sitemap files). `--browser auto` (the default) uses the Browser Use cloud browser when `BROWSER_USE_API_KEY` is
+set, else your local Chrome. If the browser can't be reached the run stops instead of quietly using HTTP.
 
-Expect about 30-60 s per school with `--browser none`, about 4 min per school with the cloud browser.
+Cloud sessions are batched: a fresh cloud browser is started every `--schools-per-session` schools (default 2) or
+before `--session-minutes` (default 15) runs out, and again if a session dies mid-school. The pipeline always
+stops the browser at the end (also on errors and Ctrl-C), because cloud browsers bill while open.
+
+Expect about 5 minutes per school with the cloud browser.
 
 ## Output
 
@@ -82,9 +89,13 @@ work. To start completely fresh, delete that file.
 workbook -> 1 discover -> 2 fetch -> 3 chunk -> 4 retrieve -> 5 extract -> 6 validate -> 7 write
 ```
 
-1. **discover** (`discover.py`, no LLM): start link + its links + the site's sitemap (+ Bing via the browser).
-   URLs are scored per field group; each group gets its own best pages. Undergraduate pages, other programs'
-   pages and other schools' sections of the site are skipped.
+1. **discover** (`discover.py`, `search.py`, no LLM):
+   - **search** for each field group, in the browser: Bing with "<university> <program> <topic>" (results off the
+     school's site are dropped), DuckDuckGo if Bing gives nothing, and the school's own site-search box. The top 3
+     hits per group are opened. Engines that show a CAPTCHA are switched off for the run (never solved).
+   - **crawl** outward from the start link and the found pages, plus the school's sitemap; URLs are scored per
+     field group and each group gets its own best pages.
+   - Undergraduate pages, other programs' pages and other schools' sections of the site are skipped.
 2. **fetch** (`fetch.py`): browser-harness renders the page and opens accordions/tabs; plain HTTP is the fallback;
    PDFs are read with pypdf.
 3. **chunk** (`retrieve.py`): pages -> ~1,500-character chunks; duplicate pages dropped.
@@ -109,7 +120,8 @@ uv run --with pytest --with openpyxl --with beautifulsoup4 --with requests --wit
 ## Known limits
 
 - Rows without a Website Link are skipped (fill the link in the workbook).
-- Bing often shows a challenge page to automated browsers; the pipeline then skips search for that run.
+- DuckDuckGo shows a CAPTCHA to the cloud browser, so it is effectively off; Bing works but ignores `site:`,
+  which is why queries use the university name instead.
 - Class-profile, outcomes and ranking fields are often not published on schools' own pages.
 - The row's Program Name steers the model: if it doesn't match the Website Link, values can come from the wrong
   program. Check that the two agree.

@@ -170,3 +170,10 @@ def test_section_scoring_avoids_other_schools():
     assert section_bonus("https://www.american.edu/admissions/graduate-admissions/index.cfm", start) == 0
     w = program_words("APPLIED ECONOMICS")
     assert score("https://www.american.edu/wcl/career/", "Career", "experience", w, start) <= 0
+
+
+def test_bing_redirect_decoding():
+    from field_pipeline.search import bing_target
+    href = "https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly93d3cuYXBwbGllZC5jb20v&ntb=1"
+    assert bing_target(href) == "https://www.applied.com/"
+    assert bing_target("https://www.bc.edu/x") == "https://www.bc.edu/x"

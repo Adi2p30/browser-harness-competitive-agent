@@ -6,9 +6,8 @@ groups so every group gets its own best pages instead of one global crawl order.
 """
 import logging
 import re
-import time
 import xml.etree.ElementTree as ET
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import urlparse
 
 import requests
 
@@ -127,35 +126,24 @@ def _read_sitemap(url: str, limit: int, depth: int) -> list[str]:
     return locs[:limit]
 
 
-def bing_search(fetcher: Fetcher, query: str, n: int = 8) -> list[tuple[str, str]] | None:
-    """[(title, url)] from Bing via the real browser; None if the browser is unavailable or Bing shows a challenge."""
-    with fetcher._lock:
-        h = fetcher.browser()
-        if h is None:
-            return None
-        try:
-            h.goto_url(f"https://www.bing.com/search?q={quote_plus(query)}")
-            h.wait_for_load(15)
-            h.wait(1.5)
-            title = h.js("document.title") or ""
-            if re.search(r"captcha|challenge|verify|unusual traffic", title + (h.js(
-                    "document.body ? document.body.innerText.slice(0, 600) : ''") or ""), re.I):
-                log.warning("Bing showed a challenge page; web search disabled for this run")
-                return None
-            results = h.js("""[...document.querySelectorAll('li.b_algo h2 a')].slice(0, %d)
-                              .map(a => [a.innerText, a.href])""" % n) or []
-        except Exception as exc:
-            log.warning("Bing search failed: %s", exc)
-            return []
-    return [(t, u) for t, u in results if u.startswith("http")]
+# Short site-search queries per group (school search boxes match keywords, not sentences). basics needs no search.
+SITE_QUERY = {"profile": "class profile", "structure": "curriculum credit hours", "admissions": "application deadlines",
+              "cost": "tuition", "experience": "career services", "outcomes": "employment outcomes",
+              "rankings": "rankings"}
 
 
 class Discoverer:
+    """Per row: 1) search (DuckDuckGo/Bing with site:<domain>, and the school's own search box) for each field
+    group, opening the top hits; 2) crawl outward from the start link and the found pages, choosing links per group
+    by keyword score; the school's sitemap adds more candidate URLs. No LLM involved."""
+
     def __init__(self, store: Store, fetcher: Fetcher, per_group: int = 4, second_round: int = 2,
-                 use_search: bool = True, search_pause: float = 4.0):
+                 use_search: bool = True, search_hits: int = 3):
+        from .search import Searcher
         self.store, self.fetcher = store, fetcher
         self.per_group, self.second_round = per_group, second_round
-        self.use_search, self.search_pause = use_search, search_pause
+        self.use_search, self.search_hits = use_search, search_hits
+        self.searcher = Searcher(fetcher)
         self._sitemaps: dict[str, list[str]] = {}
 
     def get(self, url: str) -> dict:
@@ -169,64 +157,49 @@ class Discoverer:
             log.info("fetched [%s/%s] %s (%d chars)", page.get("via", "-"), page["status"], url, len(page.get("text") or ""))
         return page
 
-    def run(self, row_key: str, start: str, program: str, groups: list[str]) -> list[dict]:
+    def run(self, row_key: str, start: str, program: str, groups: list[str], university: str = "") -> list[dict]:
         words = program_words(program)
         pool: dict[str, str] = {}  # url -> anchor text
+        done: set[str] = set()
 
         def add(url: str, anchor: str = "") -> None:
             url = clean_url(url)
             if is_same_site(url, start) and url not in pool and not urlparse(url).path.lower().endswith(SKIP_EXT):
                 pool[url] = anchor
 
-        def pick(group: str, k: int) -> list[str]:
-            ranked = sorted(((score(u, a, group, words, start), u) for u, a in pool.items()), reverse=True)
-            chosen = []
-            for s, u in ranked:
-                if len(chosen) >= k or s <= 0:
-                    break
-                if u not in done:
-                    chosen.append(u)
-                    self.store.add_candidate(row_key, u, group, s, "crawl")
-            return chosen
+        def open_page(url: str, group: str, s: float, source: str) -> None:
+            self.store.add_candidate(row_key, url, group, s, source)
+            if url in done:
+                return
+            done.add(url)
+            for a, link in self.get(url).get("links") or []:
+                add(link, a)
 
-        first = self.get(start)
-        self.store.add_candidate(row_key, clean_url(start), "*", 100, "start")
-        done = {clean_url(start)}
-        for a, u in first.get("links") or []:
-            add(u, a)
+        open_page(clean_url(start), "*", 100, "start")
         host = urlparse(start).netloc
         if host not in self._sitemaps:
             self._sitemaps[host] = sitemap_urls(start)
         for u in self._sitemaps[host]:
             add(u)
 
+        if self.use_search:
+            for group in groups:
+                if group not in SITE_QUERY:
+                    continue
+                hits = self.searcher.find(start, university.title(), program.title(), SITE_QUERY[group])
+                kept = [(src, t, clean_url(u)) for src, t, u in hits
+                        if score(clean_url(u), t, group, words, start) > -10][:self.search_hits * 2]
+                log.info("search %-10s -> %d hit(s): %s", group, len(kept), [u for _, _, u in kept][:6])
+                for rank, (src, title, url) in enumerate(kept):
+                    add(url, title)
+                    if rank < self.search_hits:
+                        open_page(url, group, 50 - rank, f"search:{src}")
+
         for k in (self.per_group, self.second_round):
             for group in groups:
-                for u in pick(group, k):
-                    if u in done:
-                        continue
-                    done.add(u)
-                    page = self.get(u)
-                    for a, link in page.get("links") or []:
-                        add(link, a)
-
-        if self.use_search:
-            self._search(row_key, start, program, groups, done)
+                ranked = sorted(((score(u, a, group, words, start), u) for u, a in pool.items() if u not in done),
+                                reverse=True)
+                for s, u in ranked[:k]:
+                    if s > 0:
+                        open_page(u, group, s, "crawl")
         return self.store.row_pages(row_key)
-
-    def _search(self, row_key: str, start: str, program: str, groups: list[str], done: set[str]) -> None:
-        for group in groups:
-            query = f'site:{site(start)} "{program}" {GROUPS[group].search}' if program else \
-                f"site:{site(start)} {GROUPS[group].search}"
-            hits = bing_search(self.fetcher, query)
-            if hits is None:
-                self.use_search = False
-                return
-            time.sleep(self.search_pause)
-            for rank, (title, url) in enumerate(hits[:3]):
-                url = clean_url(url)
-                if not is_same_site(url, start) or url in done:
-                    continue
-                self.store.add_candidate(row_key, url, group, 20 - rank, "search")
-                done.add(url)
-                self.get(url)

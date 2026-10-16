@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlparse
 
@@ -79,21 +80,36 @@ def pdf_text(data: bytes) -> str:
 CLOUD_NAME = "fieldpipe"  # BU_NAME of the Browser Use cloud daemon this pipeline starts and stops
 
 
+class BrowserUnavailable(RuntimeError):
+    """The browser could not be started or reached; the run stops instead of silently using plain HTTP."""
+
+
 class Fetcher:
-    def __init__(self, mode: str = "auto", cloud_minutes: int = 120):
-        """mode: cloud (Browser Use Cloud), local (your Chrome), none (plain HTTP), or auto (cloud if
-        BROWSER_USE_API_KEY is set, else local)."""
+    """Every HTML page is opened in a real browser through browser-harness. Plain HTTP is used only for files a
+    browser does not render as text (PDFs, sitemap XML), or for HTML when http_fallback is on.
+
+    Cloud mode (Browser Use Cloud) rotates sessions: a fresh cloud browser every `schools_per_session` schools or
+    before `session_minutes` runs out, and again if a session dies mid-school."""
+
+    def __init__(self, mode: str = "auto", session_minutes: int = 15, schools_per_session: int = 2,
+                 http_fallback: bool = False):
         if mode == "auto":
             mode = "cloud" if _env_has("BROWSER_USE_API_KEY") else "local"
         self.mode = mode
         self.use_browser = mode != "none"
-        self.cloud_minutes = cloud_minutes
+        self.session_minutes = session_minutes
+        self.schools_per_session = schools_per_session
+        self.http_fallback = http_fallback or mode == "none"
         self.cloud_started = False
+        self.session_started_at = 0.0
+        self.session_schools = 0
+        self.sessions = 0
         self.browser_ok = 0
         self.browser_fail = 0
         self._h = None
+        self._admin = None
         self._tab = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     # browser-harness, wired to the same runtime dirs the repo's ./browser-harness launcher uses
     def _harness(self):
@@ -109,30 +125,52 @@ class Fetcher:
                 os.environ["BU_NAME"] = CLOUD_NAME  # helpers bind to the daemon named at import time
                 os.environ.setdefault("BH_OPEN_LIVE_URL", "0")
             from browser_harness import admin, helpers
-            if self.mode == "cloud":
-                if not admin.daemon_alive(CLOUD_NAME):
-                    browser = admin.start_remote_daemon(CLOUD_NAME, timeout=self.cloud_minutes)
-                    self.cloud_started = True
-                    log.info("Browser Use cloud browser started (id %s, auto-stops after %d min); live view: %s",
-                             browser.get("id"), self.cloud_minutes, browser.get("liveUrl"))
-            else:
+            self._admin, self._h = admin, helpers
+            if self.mode == "local":
                 admin.ensure_daemon()
-            self._h = helpers
+        if self.mode == "cloud" and not self.cloud_started:
+            self._start_cloud()
         return self._h
 
-    def close(self) -> None:
-        """Stop the cloud browser this fetcher started (cloud browsers bill until stopped)."""
+    def _start_cloud(self) -> None:
+        if self._admin.daemon_alive(CLOUD_NAME):  # leftover from a crashed run
+            self._admin.stop_remote_daemon(CLOUD_NAME)
+        browser = self._admin.start_remote_daemon(CLOUD_NAME, timeout=self.session_minutes)
+        self.cloud_started, self.session_started_at, self.session_schools = True, time.time(), 0
+        self.sessions += 1
+        self._tab = None
+        log.info("cloud browser session %d started (id %s, %d-min limit); live view: %s", self.sessions,
+                 browser.get("id"), self.session_minutes, browser.get("liveUrl"))
+
+    def _stop_cloud(self) -> None:
         if self.cloud_started:
-            from browser_harness import admin
+            self.cloud_started = False
+            self._tab = None
             try:
-                admin.stop_remote_daemon(CLOUD_NAME)
-                log.info("Browser Use cloud browser stopped")
+                self._admin.stop_remote_daemon(CLOUD_NAME)
+                log.info("cloud browser session %d stopped after %.1f min", self.sessions,
+                         (time.time() - self.session_started_at) / 60)
             except Exception as exc:
                 log.error("could not stop cloud browser %r: %s -- stop it in the Browser Use dashboard", CLOUD_NAME, exc)
-            self.cloud_started = False
+
+    def begin_school(self) -> None:
+        """Call before each school: rotates the cloud session after N schools or when time is nearly up."""
+        if self.mode != "cloud" or not self.cloud_started:
+            return
+        age = time.time() - self.session_started_at
+        if self.session_schools >= self.schools_per_session or age > max(60, self.session_minutes * 60 - 300):
+            log.info("rotating cloud browser (%d school(s), %.1f min used)", self.session_schools, age / 60)
+            with self._lock:
+                self._stop_cloud()
+        self.session_schools += 1
+
+    def close(self) -> None:
+        """Stop the cloud browser (cloud browsers bill until stopped)."""
+        if self.mode == "cloud" and self._admin:
+            self._stop_cloud()
 
     def browser(self):
-        """The harness helpers with this fetcher's tab active, or None if the browser is unusable."""
+        """The harness helpers with this fetcher's tab active. Raises BrowserUnavailable if it cannot be reached."""
         if not self.use_browser:
             return None
         try:
@@ -140,12 +178,10 @@ class Fetcher:
             self._tab = self._tab or h.new_tab()
             h.switch_tab(self._tab)
             return h
-        except Exception as exc:  # daemon down, Chrome not debuggable, ...
-            log.warning("browser unavailable (%s); using plain HTTP", exc)
-            self.use_browser = False
-            return None
+        except Exception as exc:  # daemon down, Chrome not debuggable, cloud quota, ...
+            raise BrowserUnavailable(f"browser-harness ({self.mode}) unavailable: {exc}") from exc
 
-    def _via_browser(self, url: str) -> dict | None:
+    def _via_browser(self, url: str, retry: bool = True) -> dict | None:
         with self._lock:
             h = self.browser()
             if h is None:
@@ -167,9 +203,10 @@ class Fetcher:
             except Exception as exc:
                 self.browser_fail += 1
                 log.warning("browser fetch failed %s: %s", url, exc)
-                if self.browser_ok == 0 and self.browser_fail >= 5:
-                    log.error("browser failed 5 times and never worked; switching to plain HTTP")
-                    self.use_browser = False
+                if retry and self.mode == "cloud":  # the session may have expired: new session, one retry
+                    log.info("restarting cloud browser and retrying once")
+                    self._stop_cloud()
+                    return self._via_browser(url, retry=False)
                 return None
         if not str(final).startswith(("http://", "https://")):
             return None
@@ -178,7 +215,7 @@ class Fetcher:
         log.debug("browser %s: %d chars, %d links, %d elements expanded", url, len(text), len(links), clicked)
         return {"final_url": final, "kind": "html", "title": title, "text": text, "links": links, "via": "browser"}
 
-    def _via_http(self, url: str) -> dict | None:
+    def _via_http(self, url: str, html_ok: bool) -> dict | None:
         try:
             resp = requests.get(url, headers=HEADERS, timeout=25)
         except requests.RequestException as exc:
@@ -196,16 +233,20 @@ class Fetcher:
                 return None
             return {"final_url": resp.url, "kind": "pdf", "title": Path(urlparse(resp.url).path).name, "text": text,
                     "links": [], "via": "http"}
-        if "html" not in ctype:
+        if "html" not in ctype or not html_ok:
             return None
         title, text, links = html_to_page(resp.text, resp.url)
         return {"final_url": resp.url, "kind": "html", "title": title, "text": text, "links": links, "via": "http"}
 
     def fetch(self, url: str) -> dict:
-        is_pdf = urlparse(url).path.lower().endswith(".pdf")
-        got = None if is_pdf else self._via_browser(url)
-        if got is None or len(got["text"]) < MIN_TEXT:
-            got = self._via_http(url) or got
+        if urlparse(url).path.lower().endswith(".pdf"):
+            got = self._via_http(url, html_ok=False)
+        else:
+            got = self._via_browser(url)
+            if got is not None and got["final_url"].lower().endswith(".pdf"):  # browser landed on a PDF viewer
+                got = self._via_http(got["final_url"], html_ok=False)
+            elif (got is None or len(got["text"]) < MIN_TEXT) and self.http_fallback:
+                got = self._via_http(url, html_ok=True) or got
         if got is None:
             return {"url": url, "status": "unreadable"}
         status = "ok" if len(got["text"]) >= MIN_TEXT else "empty"
