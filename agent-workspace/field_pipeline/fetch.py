@@ -2,11 +2,15 @@
 
 HTML goes through the real browser (browser-harness) so JavaScript-rendered pages, accordions and tabs are read;
 plain HTTP is the fallback when the browser is not attached. PDFs are downloaded and read with pypdf.
+Class-profile numbers often hide in animated counters, multi-column tables and infographics, so counters are set to
+their target values, table cells keep their column header, image alt / SVG text is kept, and on profile-like pages
+large images are OCR'd when `tesseract` is installed.
 """
 import io
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -41,6 +45,50 @@ EXPAND_JS = r"""
 """
 
 
+# "By the numbers" counters animate from 0 when scrolled into view; the target is usually in a data attribute.
+# Returns [counters set from attributes, counters still showing 0].
+COUNTERS_JS = r"""
+(() => {
+  const attrs = ['data-count', 'data-target', 'data-to', 'data-number', 'data-end', 'data-value', 'data-countup',
+                 'data-final', 'data-stop', 'data-count-to', 'data-num', 'data-purecounter-end'];
+  let set = 0, zero = 0;
+  for (const el of document.querySelectorAll(attrs.map(a => '[' + a + ']').join(','))) {
+    const t = el.textContent;
+    if (el.children.length || !/^\D{0,3}-?[\d.,]*\D{0,3}$/.test(t.trim())) continue;  // counter-like text only
+    for (const a of attrs) {
+      const v = (el.getAttribute(a) || '').trim();
+      if (/^-?[\d.,]+$/.test(v)) {
+        el.textContent = /\d/.test(t) ? t.replace(/-?[\d.,]+/, v) : v + t;
+        set++;
+        break;
+      }
+    }
+  }
+  for (const el of document.querySelectorAll('[class*="count" i], [class*="odometer" i], [class*="stat" i], [class*="number" i]'))
+    if (!el.children.length && /^\D{0,3}0(\.0+)?\D{0,3}$/.test(el.textContent.trim())) zero++;
+  return [set, zero];
+})()
+"""
+# Counters that never loaded would read as a real 0 (0% women): replace their text so the model cannot use them.
+MARK_ZERO_JS = r"""
+(() => {
+  let n = 0;
+  for (const el of document.querySelectorAll('[class*="count" i], [class*="odometer" i], [class*="stat" i], [class*="number" i]'))
+    if (!el.children.length && /^\D{0,3}0(\.0+)?\D{0,3}$/.test(el.textContent.trim())) { el.textContent = '[counter not loaded]'; n++; }
+  return n;
+})()
+"""
+SCROLL_JS = "window.scrollBy(0, Math.max(400, window.innerHeight * 0.9)); [window.scrollY + window.innerHeight, document.body.scrollHeight]"
+# Large images on the page (infographics), for OCR: [[src, alt], ...]
+IMAGES_JS = r"""
+[...document.images].filter(i => i.naturalWidth >= 400 && i.naturalHeight >= 150 && !/logo|icon/i.test(i.currentSrc + ' ' + i.alt))
+  .slice(0, 6).map(i => [i.currentSrc || i.src, i.alt || ''])
+"""
+PROFILE_PAGE = re.compile(r"profile|by[-_ ]the[-_ ]numbers|class[-_ ]of|cohort|facts|statistic|students|admissions", re.I)
+TESSERACT = shutil.which("tesseract")
+MIN_ALT = 4
+
+
 def site(url: str) -> str:
     """Registrable-ish domain: 'business.purdue.edu' -> 'purdue.edu'."""
     host = urlparse(url).netloc.lower().split(":")[0]
@@ -49,11 +97,46 @@ def site(url: str) -> str:
         else ".".join(parts[-2:])
 
 
+def _alt(text: str) -> str:
+    text = " ".join((text or "").split())
+    return "" if len(text) < MIN_ALT or re.search(r"\blogo\b|\bicon\b|\.(png|jpe?g|svg|webp)$", text, re.I) else text
+
+
 def html_to_page(html: str, url: str) -> tuple[str, str, list[tuple[str, str]]]:
-    """(title, text, [(anchor, absolute url)]). Table rows become 'cell | cell' lines so tuition tables stay readable."""
+    """(title, text, [(anchor, absolute url)]). Table rows become 'cell | cell' lines; in tables with a header row
+    and 3+ columns each cell is prefixed by its column header ('Average GMAT | MSF: 640 | MSBA: 655'), so a
+    number keeps its program even when the table is split into chunks. Image alt text, SVG text and dt/dd pairs
+    are kept."""
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
+    for tag in soup(["script", "style", "noscript", "iframe"]):
         tag.decompose()
+    for svg in soup.find_all("svg"):  # charts and infographics drawn as SVG: keep their text labels
+        label = " ".join(" ".join(t.get_text(" ").split()) for t in svg.find_all(["text", "title"]))
+        svg.replace_with(soup.new_string(f" [graphic: {label}] " if _alt(label) else " "))
+    for img in soup.find_all(["img", "area"]):
+        alt = _alt(img.get("alt") or img.get("aria-label") or "")
+        img.replace_with(soup.new_string(f" [image: {alt}] " if alt else " "))
+    for el in soup.select('[role="img"][aria-label]'):
+        if alt := _alt(el["aria-label"]):
+            el.insert_before(soup.new_string(f" [image: {alt}] "))
+    for dl in soup.find_all("dl"):  # <dt>Average GMAT</dt><dd>612</dd> -> one line
+        for dt in dl.find_all("dt"):
+            dd = dt.find_next_sibling("dd")
+            if dd:
+                dt.replace_with(soup.new_string(f"\n{' '.join(dt.get_text(' ').split())}: {' '.join(dd.get_text(' ').split())}\n"))
+                dd.decompose()
+    for table in reversed(soup.find_all("table")):  # innermost first
+        rows = [[" ".join(c.get_text(" ").split()) for c in tr.find_all(["th", "td"], recursive=False)]
+                for tr in table.find_all("tr")]
+        rows = [r for r in rows if any(r)]
+        first = table.find("tr")
+        has_head = bool(table.find("thead")) or bool(first and first.find_all("th") and not first.find_all("td"))
+        if has_head and rows and len(rows[0]) >= 3:
+            head, lines = rows[0], [" | ".join(c for c in rows[0] if c)]
+            for r in rows[1:]:
+                cells = [r[0]] + [f"{head[i]}: {c}" if i < len(head) and head[i] else c for i, c in enumerate(r[1:], 1) if c]
+                lines.append(" | ".join(c for c in cells if c))
+            table.replace_with(soup.new_string("\n" + "\n".join(lines) + "\n"))
     title = " ".join((soup.title.get_text() if soup.title else "").split())
     links, seen = [], set()
     for a in soup.find_all("a", href=True):
@@ -217,7 +300,9 @@ class Fetcher:
                 clicked = h.js(EXPAND_JS) or 0
                 if clicked:
                     h.wait(1.5)
-                html, final = h.js("[document.documentElement.outerHTML, location.href]")
+                counters = self._settle_counters(h, activate=self.mode == "cloud")
+                html, final, title = h.js("[document.documentElement.outerHTML, location.href, document.title]")
+                images = h.js(IMAGES_JS) if TESSERACT and PROFILE_PAGE.search(f"{final} {title}") else []
             except Exception as exc:
                 self.browser_fail += 1
                 log.warning("browser fetch failed %s: %s", url, exc)
@@ -230,8 +315,52 @@ class Fetcher:
             return None
         self.browser_ok += 1
         title, text, links = html_to_page(html, final)
-        log.debug("browser %s: %d chars, %d links, %d elements expanded", url, len(text), len(links), clicked)
+        if ocr := self._ocr(images or []):
+            text += "\n" + ocr
+        log.debug("browser %s: %d chars, %d links, %d expanded, counters %s, %d image(s) OCR'd", url, len(text),
+                  len(links), clicked, counters, len(images or []))
         return {"final_url": final, "kind": "html", "title": title, "text": text, "links": links, "via": "browser"}
+
+    def _settle_counters(self, h, activate: bool) -> list[int]:
+        """Set counters to their data-attribute targets. If some still read 0, scroll the page so their animation
+        runs (they start when scrolled into view) and read them again. The pipeline's tab is not the visible one,
+        and background tabs do not render, so a tiny screenshot forces a frame after each step; in the cloud
+        browser (ours alone) the tab is also brought to the front. Counters still at 0 are marked unreadable.
+        Returns [counters set, counters left at 0]."""
+        set_, zero = h.js(COUNTERS_JS) or [0, 0]
+        if zero:
+            if activate and self._tab:
+                h.activate_tab(self._tab)
+            for _ in range(15):
+                pos, height = h.js(SCROLL_JS) or [0, 0]
+                h.cdp("Page.captureScreenshot", format="jpeg", quality=1,
+                      clip={"x": 0, "y": 0, "width": 8, "height": 8, "scale": 1})
+                h.wait(0.3)
+                if pos >= height:
+                    break
+            h.wait(2)
+            h.js("window.scrollTo(0, 0)")
+            set_, zero = h.js(COUNTERS_JS) or [0, 0]
+            if zero:
+                h.js(MARK_ZERO_JS)
+        return [set_, zero]
+
+    @staticmethod
+    def _ocr(images: list) -> str:
+        """Text of infographic images (tesseract), one '[image text: ...]' line each."""
+        out = []
+        for src, alt in images:
+            try:
+                data = requests.get(src, headers=HEADERS, timeout=20).content
+                text = subprocess.run([TESSERACT, "stdin", "stdout", "--psm", "11"], input=data, capture_output=True,
+                                      timeout=60).stdout.decode("utf-8", "replace")
+            except Exception as exc:
+                log.debug("ocr failed %s: %s", src, exc)
+                continue
+            text = " ".join(text.split())
+            if re.search(r"\d", text):
+                out.append(f"[image text{f' ({alt})' if alt else ''}: {text}]")
+        return "\n".join(out)
 
     def _via_http(self, url: str, html_ok: bool) -> dict | None:
         try:
