@@ -10,13 +10,35 @@ from pathlib import Path
 import requests
 
 API_URL = os.environ.get("RCAC_API_URL", "https://genai.rcac.purdue.edu/api/chat/completions")
-MODEL = os.environ.get("RCAC_MODEL", "gpt-oss:120b")
-TIMEOUT, RETRIES = 180, 8
+MODEL = os.environ.get("RCAC_MODEL", "qwen3.8:27b")
+TIMEOUT, RETRIES = 120, 8  # normal replies take 5-95 s; a hung request is retried sooner
 MIN_INTERVAL = 1.5  # seconds between request starts across all threads (RCAC rate-limits bursts)
 _gate = threading.Lock()
 _last_start = [0.0]
 LOG_PATH: Path | None = None  # every prompt/reply appended here as JSONL when set
 _log_lock = threading.Lock()
+
+
+def _post(*args, limit: float, **kwargs):
+    """requests.post with a wall-clock limit. requests' own timeout only bounds each socket read, so a server that
+    stalls mid-reply can hang a call for hours; the post runs on a daemon thread that is abandoned after `limit`
+    seconds (daemon, so it never blocks the process from exiting). Raises TimeoutError."""
+    out: list = []
+    t = threading.Thread(target=lambda: out.append(_safe(requests.post, *args, **kwargs)), daemon=True)
+    t.start()
+    t.join(limit)
+    if not out:
+        raise TimeoutError
+    if isinstance(out[0], BaseException):
+        raise out[0]
+    return out[0]
+
+
+def _safe(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except BaseException as exc:  # handed back to the caller's thread
+        return exc
 log = logging.getLogger(__name__)
 
 
@@ -44,7 +66,11 @@ def chat(prompt: str) -> str:
                 time.sleep(pause)
             _last_start[0] = time.time()
         try:
-            resp = requests.post(API_URL, headers=headers, json=body, timeout=TIMEOUT)
+            try:
+                resp = _post(API_URL, headers=headers, json=body, timeout=TIMEOUT, limit=TIMEOUT + 10)
+            except TimeoutError:
+                log.warning("RCAC call exceeded %d s (attempt %d); retrying", TIMEOUT + 10, attempt)
+                continue
             if not resp.ok and "rate limit" in resp.text[:300].casefold():
                 wait_s = min(15 * 2 ** (attempt - 1), 240)
                 log.warning("RCAC rate limit (attempt %d); waiting %d s", attempt, wait_s)
@@ -71,7 +97,7 @@ def chat(prompt: str) -> str:
 def chat_json(prompt: str) -> dict:
     """chat() and parse the first JSON object in the reply; one retry on unparseable output."""
     for _ in range(2):
-        text = re.sub(r"```(?:json)?", "", chat(prompt))
+        text = re.sub(r"```(?:json)?|<think>.*?</think>", "", chat(prompt), flags=re.S)
         start = text.find("{")
         if start >= 0:
             try:

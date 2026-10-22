@@ -1,6 +1,7 @@
 """Stage 6: code checks on every extracted value. Nothing reaches the workbook without passing all of them.
 
-Statuses: found (passed every check) | off-cycle | other-program | bad-quote | bad-value | out-of-range |
+Statuses: found (passed every check, 2026-2027 or undated) | found-prior (passed, but for an earlier academic year
+the field allows: detail = that year) | off-cycle | other-program | bad-quote | bad-value | out-of-range |
 bad-source | not-found
 """
 import re
@@ -25,24 +26,26 @@ def term_ay(name: str, year: int) -> tuple[int, int]:
     return (year, year + 1) if name.casefold() in ("fall", "autumn") else (year - 1, year)
 
 
-def cycle_problem(quote: str, kind: str) -> str | None:
-    """Why the quote is tied to an academic year other than 2026-2027, or None."""
+def cycle_lag(quote: str, kind: str) -> tuple[int, str]:
+    """(years back from 2026-2027, oldest academic year named). (0, "") = 2026-2027 or undated; < 0 = a later year."""
+    starts = []  # first calendar year of every academic year the quote names
     for a, b in AY.findall(quote):
         end = int(b) if len(b) == 4 else int(a[:2] + b)
-        if end == int(a) + 1 and (int(a), end) != TARGET:
-            return f"names {a}-{end}"
+        if end == int(a) + 1:
+            starts.append(int(a))
     terms = TERM.findall(quote)
-    for name, y in terms:
-        if term_ay(name, int(y)) != TARGET:
-            return f"names {name.title()} {y}"
-    for y in CLASS_OF.findall(quote):
-        if int(y) not in (2027, 2028):  # graduating class of the cohort entering in 2026-27
-            return f"names class of {y}"
-    allowed = {2026, 2027} | ({2025} if kind == "date" or terms else set())
-    for y in YEAR.findall(CLASS_OF.sub("", AY.sub("", quote))):
-        if int(y) not in allowed:
-            return f"names {y}"
-    return None
+    starts += [term_ay(name, int(y))[0] for name, y in terms]
+    for y in map(int, CLASS_OF.findall(quote)):  # graduating class of the cohort entering in 2026-27 = 2027 or 2028
+        starts.append(TARGET[0] if y >= 2027 else y - 1)
+    for y in map(int, YEAR.findall(CLASS_OF.sub("", AY.sub("", quote)))):
+        if y in TARGET or (y == 2025 and (kind == "date" or terms)):
+            continue
+        starts.append(y if y < TARGET[0] else y - 1)
+    if not starts:
+        return 0, ""
+    later = [a for a in starts if a > TARGET[0]]
+    a = max(later) if later else min(starts)
+    return TARGET[0] - a, f"{a}-{a + 1}"
 
 
 def _trim(n: str) -> str:
@@ -77,8 +80,9 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
         return "other-program", "school-wide figure for a program-specific field"
     if UNDERGRAD.search(quote) or UNDERGRAD.search(source):
         return "other-program", "undergraduate source"
-    if added := set(YEAR.findall(value)) - set(YEAR.findall(quote)):
-        return "bad-value", f"value adds year {sorted(added)[0]} that the quote does not state"
+    # A year the quote lacks is fine if the page states it (e.g. a "Fall 2026 deadlines" heading above the table).
+    if added := set(YEAR.findall(value)) - set(YEAR.findall(quote)) - set(YEAR.findall(page_text)):
+        return "bad-value", f"value adds year {sorted(added)[0]} that the page does not state"
     if field.kind in NUMERIC:
         quote_digits = re.sub(r"[,\s]", "", quote)
         value_nums = NUMBER.findall(value.replace(",", ""))
@@ -93,6 +97,9 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
         elif field.lo is not None and n is not None and not (field.lo <= n <= field.hi):
             if not (field.kind == "gre" and 130 <= n <= 170):
                 return "out-of-range", f"{n} outside {field.lo}-{field.hi}"
-    if why := cycle_problem(quote, field.kind):
-        return "off-cycle", why
-    return "found", ""
+    lag, label = cycle_lag(f"{quote} {value}", field.kind)
+    if lag == 0:
+        return "found", ""
+    if 0 < lag <= field.max_lag:
+        return "found-prior", label
+    return "off-cycle", f"names {label}"

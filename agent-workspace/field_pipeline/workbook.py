@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
+from openpyxl.styles import PatternFill
 
 AUTHOR = "field-pipeline"
 
@@ -54,11 +55,28 @@ def read_rows(path: str, sheets: list[str] | None = None) -> tuple[dict[str, lis
     return cols, rows
 
 
-def write(src: str, dest: str, cells: list[tuple[str, int, str, object, str, str | None]]) -> int:
-    """cells: (sheet, row, column, value or None, comment, hyperlink). None value = comment only."""
+def read_values(path: str) -> dict[tuple[str, str], list[dict]]:
+    """Every program row of a workbook as {column: value}, keyed by (sheet, university) casefolded."""
+    wb = load_workbook(path, read_only=True)
+    out: dict[tuple[str, str], list[dict]] = {}
+    for ws in wb.worksheets:
+        head = headers(ws)
+        if "Website Link" not in head:
+            continue
+        for r, values in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if values and not _blank(values[0]):
+                rec = {h: v for h, v in zip(head, values) if h and not _blank(v)}
+                rec["_row"] = r
+                out.setdefault((ws.title.casefold(), str(values[0]).strip().casefold()), []).append(rec)
+    wb.close()
+    return out
+
+
+def write(src: str, dest: str, cells: list[tuple]) -> int:
+    """cells: (sheet, row, column, value or None, comment, hyperlink[, fill hex]). None value = comment only."""
     wb = load_workbook(src)
     n = 0
-    for sheet, row, col, value, note, link in cells:
+    for sheet, row, col, value, note, link, *fill in cells:
         ws = wb[sheet]
         head = headers(ws)
         cell = ws.cell(row=row, column=head.index(col) + 1)
@@ -68,5 +86,7 @@ def write(src: str, dest: str, cells: list[tuple[str, int, str, object, str, str
         cell.comment = Comment(note[:1500], AUTHOR, width=420, height=180)
         if link and value is not None:
             cell.hyperlink = link
+        if fill and fill[0] and value is not None:
+            cell.fill = PatternFill("solid", start_color=fill[0], end_color=fill[0])
     wb.save(dest)
     return n

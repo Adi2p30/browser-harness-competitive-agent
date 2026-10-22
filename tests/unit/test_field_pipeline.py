@@ -7,11 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent-workspace"))
 pytest.importorskip("bs4")
 pytest.importorskip("openpyxl")
 
-from field_pipeline.discover import foreign_program, program_words, score  # noqa: E402
+from field_pipeline.discover import category, foreign_program, program_words, same_school, score  # noqa: E402
+from field_pipeline.extract import better, candidates  # noqa: E402
 from field_pipeline.fetch import html_to_page, site  # noqa: E402
-from field_pipeline.fields import field_for, link_target, plan  # noqa: E402
+from field_pipeline.fields import field_for, link_target, plan, usnews_kind, usnews_program_level  # noqa: E402
 from field_pipeline.retrieve import chunk_pages, top_chunks  # noqa: E402
-from field_pipeline.validate import check, cycle_problem  # noqa: E402
+from field_pipeline.validate import check, cycle_lag  # noqa: E402
 
 
 def f(col):
@@ -64,7 +65,7 @@ def test_link_pairing():
     ("Total cost $2,025 per course", "money", False),
 ])
 def test_cycle(quote, kind, bad):
-    assert (cycle_problem(quote, kind) is not None) == bad
+    assert (cycle_lag(quote, kind)[0] != 0) == bad
 
 
 def test_check_statuses():
@@ -130,6 +131,8 @@ def test_value_cannot_add_a_year():
     deadline = f("Deadline Date(s)")
     page = "Fall | Early Deadline: May 1 | Regular Deadline: August 15"
     assert check(deadline, "Fall 2026: May 1", "Fall | Early Deadline: May 1", page)[0] == "bad-value"
+    # ...unless the page states it (a "Fall 2026 deadlines" heading above the table)
+    assert check(deadline, "Fall 2026: May 1", "Fall | Early Deadline: May 1", "Fall 2026 deadlines\n" + page)[0] == "found"
     assert check(deadline, "Fall: May 1; Aug 15", "Fall | Early Deadline: May 1 | Regular Deadline: August 15", page)[0] == "found"
 
 
@@ -195,3 +198,83 @@ def test_every_field_group_exists():
     from field_pipeline.fields import FIELDS, GROUPS
     assert all(fl.group in GROUPS for fl in FIELDS)
     assert {g.name for g in GROUPS.values() if g.sites} == {"rank_usnews", "rank_bestmasters", "rank_qs"}
+
+
+@pytest.mark.parametrize("quote,kind,lag", [
+    ("Tuition for 2026-2027 is $1,250", "money", 0),
+    ("Tuition for 2025-26 is $1,250", "money", 1),
+    ("Fall 2025 entering class: average GPA 3.4", "gpa", 1),
+    ("Class of 2026 average GMAT 640", "gmat", 1),
+    ("2024-2025 class profile: 40% women", "percent", 2),
+    ("Fall 2027 application opens", "date", -1),
+    ("Average GMAT 640", "gmat", 0),
+])
+def test_cycle_lag(quote, kind, lag):
+    assert cycle_lag(quote, kind)[0] == lag
+
+
+def test_year_fallback_ladder():
+    gpa, deadline, tuition = f("Average Undergraduate GPA"), f("Deadline Date(s)"), f("In-State Tuition Per Credit")
+    q = "Fall 2025 entering class average GPA 3.4"
+    assert check(gpa, "3.4", q, q) == ("found-prior", "2025-2026")
+    q = "2024-2025 class profile average GPA 3.4"
+    assert check(gpa, "3.4", q, q) == ("found-prior", "2024-2025")
+    q = "2023-2024 class profile average GPA 3.4"
+    assert check(gpa, "3.4", q, q)[0] == "off-cycle"
+    q = "2025-2026 tuition: $1,250 per credit hour"
+    assert check(tuition, "$1,250", q, q) == ("found-prior", "2025-2026")
+    q = "2024-2025 tuition: $1,250 per credit hour"
+    assert check(tuition, "$1,250", q, q)[0] == "off-cycle"  # tuition falls back one year only
+    q = "Fall 2025 priority deadline: February 1, 2025"
+    assert check(deadline, "Fall 2025: Feb 1, 2025", q, q)[0] == "off-cycle"  # an old deadline is never used
+
+
+def test_best_candidate():
+    cur = {"status": "found", "cycle": "2026-2027"}
+    one = {"status": "found-prior", "cycle": "2025-2026"}
+    two = {"status": "found-prior", "cycle": "2024-2025"}
+    assert better(cur, one) and better(one, two) and not better(two, one)
+    assert better(two, {"status": "not-found"}) and better({"status": "not-found"}, {"status": "llm-error"})
+    assert candidates([{"value": "3.4"}, {"value": None}]) == [{"value": "3.4"}]
+    assert candidates({"value": "3.4"}) == [{"value": "3.4"}] and candidates({"value": None}) == [{}]
+
+
+def test_usnews_profile():
+    online = "https://www.usnews.com/education/online-education/liberty-university-OBUS0955/business"
+    assert usnews_kind("Online MS Economics", "") == "online-business"
+    assert usnews_kind("Online MBA", "") == "online-mba"
+    assert usnews_kind("1yr MBA", "") == "mba" and usnews_kind("MS Finance - Residential", "") == "business-school"
+    assert usnews_program_level("online-business", online)
+    assert not usnews_program_level("online-mba", online)
+    assert not usnews_program_level("online-business", "https://www.usnews.com/best-colleges/liberty-university-10392")
+    bschool = "https://www.usnews.com/best-graduate-schools/top-business-schools/boston-college-01107"
+    assert usnews_program_level("mba", bschool) and not usnews_program_level("business-school", bschool)
+    assert same_school("boston-college", "BOSTON COLLEGE") and not same_school("boston-university", "Boston College")
+    assert same_school("university-of-cincinnati", "University of Cincinnati")
+    assert same_school("purdue-university-main-campus", "PURDUE UNIVERSITY - WEST LAFAYETTE")
+    from field_pipeline.discover import USNEWS_ONLINE
+    m = USNEWS_ONLINE.match("https://www.usnews.com/education/online-education/purdue-university-main-campus-243780")
+    assert m.group(1) == "purdue-university-main-campus"
+    m = USNEWS_ONLINE.match("https://www.usnews.com/education/online-education/liberty-university-OBUS0955/mba")
+    assert m.group(1) == "liberty-university"
+    assert category("MS Finance - Residential", "") == "MS Finance"
+
+
+def test_usnews_profile_counts_as_program_level():
+    from field_pipeline.extract import judge
+    from field_pipeline.retrieve import Chunk
+    url = "https://www.usnews.com/education/online-education/liberty-university-OBUS0955/business"
+    c = Chunk("C1", url, "Liberty University - Online Graduate Business Program", "International students\n0%")
+    full = lambda ch: ch.text
+    item = {"value": "0%", "quote": "International students 0%", "excerpt": "C1", "applies_to": "school-wide"}
+    intl = f("International (%)")
+    assert judge(intl, "class", item, [c], {"C1": c}, full, "online-business")["status"] == "found"
+    assert judge(intl, "class", item, [c], {"C1": c}, full, "")["status"] == "other-program"
+
+
+def test_prior_record_match():
+    from field_pipeline.__main__ import prior_record
+    from field_pipeline.workbook import Row
+    prior = {("online mba", "boston college"): [{"Program Name": "Online MBA", "Average GMAT": 640, "_row": 4}]}
+    assert prior_record(prior, Row("Online MBA", 5, "BOSTON COLLEGE", "online  mba", "", []))["_row"] == 4
+    assert prior_record(prior, Row("Online MBA", 5, "BOSTON COLLEGE", "Hybrid MBA", "", [])) is None

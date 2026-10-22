@@ -1,7 +1,7 @@
 # field_pipeline
 
 Fills the competitive-analysis workbook one **field group** at a time: it finds a program's pages, picks the
-text relevant to each group of columns, asks Purdue's RCAC model (`gpt-oss:120b`) for the values, and keeps a
+text relevant to each group of columns, asks Purdue's RCAC model (`qwen3.8:27b`; set `RCAC_MODEL` to change it) for the values, and keeps a
 value only if code can verify its quote on the page.
 
 ## One-time setup
@@ -45,6 +45,9 @@ Useful variations:
 | Skip the Bing search step | `--no-search` |
 | Text chunks per LLM call (default 10) | `--chunks 12` |
 | Skip the second LLM pass for missing fields | `--no-second-pass` |
+| Use a specific prior-year workbook for carried-forward values | `--prior "../OLD 2025-2026.xlsx"` |
+| Never carry values forward from last year's workbook | `--no-prior` |
+| Don't search for a Website Link on rows without one | `--no-find-links` |
 | More detail in the terminal | `-v` |
 
 Every web page is opened in a real browser through browser-harness (plain HTTP is only used for PDFs and
@@ -73,15 +76,37 @@ Statuses in `decisions.csv`:
 
 | Status | Meaning | In the workbook? |
 |---|---|---|
-| `found` | Passed every check | yes |
+| `found` | Passed every check, 2026-2027 or undated | yes |
+| `found-prior` | Passed every check, but for an earlier year (`cycle` column) | yes, yellow (2025-26) / orange (2024-25) |
 | `computed` | Tuition total = per-credit x credit hours (site gave no total) | yes |
+| `carried-forward` | Nothing passed this year; value copied from last year's workbook | yes, grey |
 | `not-found` | No fetched page states it | blank + comment |
-| `off-cycle` | Value is for a year other than 2026-2027 | blank + comment |
+| `off-cycle` | Value is for a year older than the field allows, or a later year | blank + comment |
 | `other-program` | Value is for another program, undergrad, or school-wide where it must be program-specific | blank + comment |
 | `bad-quote` | Model's quote is not on the page (paraphrase or invention) | blank + comment |
 | `bad-source` | Ranking value not from (or naming) its publisher | blank + comment |
 | `bad-value` / `out-of-range` | Value doesn't match its quote, or is implausible (e.g. GPA 35) | blank + comment |
 | `no-start-link` | Row has no Website Link | blank |
+
+### Year fallbacks
+
+Each field tries, in order: 2026-2027 (or an undated value) → 2025-2026 → 2024-2025 → last year's workbook
+(`OLD *.xlsx` next to the input, same sheet + university + program). How far back a field may go is `max_lag` in
+`fields.py`: deadlines never fall back (an old deadline is wrong), tuition, scholarships and deposits go back one
+year, everything else (class profile, outcomes, rankings, structure) two. The model returns up to 3 dated
+candidates per field and the newest one that passes wins; the second pass also retries fields that only found an
+older year. A row without a Website Link takes last year's link, else a Bing search for a `.edu` page naming the
+program (written to the workbook in yellow, so check it).
+
+### U.S. News program profiles
+
+Each row is mapped to its U.S. News page by sheet: online MBA → `usnews.com/education/online-education/<school>/mba`,
+other online sheets → `.../business` (the school's online non-MBA business master's), residential sheets → the
+business-school page `usnews.com/best-graduate-schools/top-business-schools/<school>`. The online pages give
+acceptance rate, GPA, GMAT, work experience, international %, female %, average age, enrollment and rank for free;
+these count as program-level values and their cell comment names the profile. The business-school page lists
+the specialty ranks (Finance, Marketing, Business Analytics, Accounting...); its free class stats are MBA figures,
+so they are only used for MBA sheets. `best-colleges` (undergraduate) pages are always rejected.
 
 Pages and results are cached in `agent-workspace/field_pipeline/data/pipeline.sqlite`, so a rerun only does new
 work. To start completely fresh, delete that file.
@@ -110,8 +135,9 @@ workbook -> 1 discover -> 2 fetch -> 3 chunk -> 4 retrieve -> 5 extract -> 6 val
    and one per ranking publisher), so about 16 calls per school. Fields still missing get a **second pass** on the
    next 10 chunks (about 8-12 more calls).
 6. **validate** (`validate.py`): quote must be on the page, value's numbers in the quote, value in range,
-   2026-2027 cycle only, right program; ranking values must come from (or name) their publisher.
-7. **write** (`workbook.py`, `__main__.py`).
+   academic year within the field's `max_lag`, right program; ranking values must come from (or name) their
+   publisher.
+7. **write** (`workbook.py`, `__main__.py`): fallback tiers, cell colours and the `cycle` column.
 
 Columns, their groups, definitions and valid ranges are in `fields.py`. To support a new column, add a `Field`
 line there.
@@ -128,9 +154,10 @@ uv run --with pytest --with openpyxl --with beautifulsoup4 --with requests --wit
 ## Known limits
 
 - Rows without a Website Link are skipped (fill the link in the workbook).
-- If Browser Use runs out of credits (HTTP 402) the run stops cleanly and writes everything finished; rerun
-  later (or with `--browser local`) to continue.
-- usnews.com is strict with automated browsers; U.S. News values often come from the school quoting its rank.
+- If Browser Use runs out of credits (HTTP 402) the run stops researching, writes everything finished plus the
+  stored results of the remaining rows, and stops the browser; rerun later (or with `--browser local`) to continue.
+- usnews.com is strict with automated browsers; if a profile page can't be opened, U.S. News values come from the
+  school quoting its rank. Business-school pages hide most class stats behind U.S. News Compass (paid).
 - DuckDuckGo shows a CAPTCHA to the cloud browser, so it is effectively off; Bing works but ignores `site:`,
   which is why queries use the university name instead.
 - Class-profile, outcomes and ranking fields are often not published on schools' own pages.

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     row_key TEXT, url TEXT, grp TEXT, score REAL, source TEXT, PRIMARY KEY (row_key, url, grp));
 CREATE TABLE IF NOT EXISTS results (
     row_key TEXT, field TEXT, grp TEXT, value TEXT, status TEXT, url TEXT, quote TEXT, detail TEXT, at REAL,
-    PRIMARY KEY (row_key, field));
+    cycle TEXT, PRIMARY KEY (row_key, field));
 """
 
 
@@ -24,6 +24,8 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.executescript(SCHEMA)
+        if "cycle" not in {c[1] for c in self.db.execute("PRAGMA table_info(results)")}:  # databases from before cycles
+            self.db.execute("ALTER TABLE results ADD COLUMN cycle TEXT")
         self.lock = threading.Lock()
 
     # pages
@@ -51,6 +53,11 @@ class Store:
                             "score=max(score, excluded.score)", (row_key, url, grp, score, source))
             self.db.commit()
 
+    def start_url(self, row_key: str) -> str | None:
+        """The start link an earlier run used for this row (it may have been found by search)."""
+        row = self.db.execute("SELECT url FROM candidates WHERE row_key=? AND source='start'", (row_key,)).fetchone()
+        return row[0] if row else None
+
     def row_pages(self, row_key: str) -> list[dict]:
         """Readable pages fetched for a row."""
         urls = [u for (u,) in self.db.execute("SELECT DISTINCT url FROM candidates WHERE row_key=?", (row_key,))]
@@ -60,12 +67,12 @@ class Store:
     # results
     def save_result(self, row_key: str, field: str, grp: str, r: dict) -> None:
         with self.lock:
-            self.db.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?,?,?,?)",
+            self.db.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?,?,?,?,?)",
                             (row_key, field, grp, r.get("value"), r["status"], r.get("url"), r.get("quote"),
-                             r.get("detail"), time.time()))
+                             r.get("detail"), time.time(), r.get("cycle")))
             self.db.commit()
 
     def results(self, row_key: str) -> dict[str, dict]:
-        rows = self.db.execute("SELECT field, grp, value, status, url, quote, detail FROM results WHERE row_key=?",
-                               (row_key,)).fetchall()
-        return {r[0]: dict(zip(("field", "grp", "value", "status", "url", "quote", "detail"), r)) for r in rows}
+        keys = ("field", "grp", "value", "status", "url", "quote", "detail", "cycle")
+        rows = self.db.execute(f"SELECT {', '.join(keys)} FROM results WHERE row_key=?", (row_key,)).fetchall()
+        return {r[0]: dict(zip(keys, r)) for r in rows}

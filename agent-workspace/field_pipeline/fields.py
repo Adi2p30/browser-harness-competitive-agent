@@ -84,6 +84,7 @@ class Field:
     hint: str
     lo: float | None = None
     hi: float | None = None
+    max_lag: int = 2   # oldest academic year accepted when 2026-2027 is not published: 1 = 2025-26, 2 = 2024-25
 
 
 # Order matters: specific patterns before general ones.
@@ -112,17 +113,17 @@ FIELDS = [
     Field(r"delivery model", "structure", "text", "100% online / Hybrid / Online with required residency."),
     Field(r"program start", "deadlines", "text", "Month(s) the program starts (e.g. 'August, January')."),
     Field(r"deadline", "deadlines", "date", "Application deadlines for the 2026-2027 entry terms, all rounds, "
-          "e.g. 'Fall 2026: Priority Feb 1, 2026; Final Jun 1, 2026'."),
+          "e.g. 'Fall 2026: Priority Feb 1, 2026; Final Jun 1, 2026'.", max_lag=0),
     Field(r"3yr-degree|india", "requirements", "yesno", "Does the program accept a three-year bachelor's degree from "
           "India (Y/N)? Only if the page addresses three-year degrees."),
-    Field(r"in-state tuition per credit", "tuition", "money", "Tuition per credit hour for in-state residents.", 50, 10000),
-    Field(r"out-of-state tuition per credit", "tuition", "money", "Tuition per credit hour for out-of-state students.", 50, 10000),
-    Field(r"international tuition per credit", "tuition", "money", "Tuition per credit hour for international students.", 50, 10000),
-    Field(r"in-state tuition total", "tuition", "money", "Total program tuition for in-state residents, as stated.", 1000, 400000),
-    Field(r"out-of-state tuition total", "tuition", "money", "Total program tuition for out-of-state students, as stated.", 1000, 400000),
-    Field(r"international tuition total", "tuition", "money", "Total program tuition for international students, as stated.", 1000, 400000),
-    Field(r"scholarship", "aid", "text", "Scholarships offered to students of this program (Yes/No + names/amounts)."),
-    Field(r"deposit", "aid", "text", "Enrollment deposit required to hold a seat (amount, or Yes/No)."),
+    Field(r"in-state tuition per credit", "tuition", "money", "Tuition per credit hour for in-state residents.", 50, 10000, max_lag=1),
+    Field(r"out-of-state tuition per credit", "tuition", "money", "Tuition per credit hour for out-of-state students.", 50, 10000, max_lag=1),
+    Field(r"international tuition per credit", "tuition", "money", "Tuition per credit hour for international students.", 50, 10000, max_lag=1),
+    Field(r"in-state tuition total", "tuition", "money", "Total program tuition for in-state residents, as stated.", 1000, 400000, max_lag=1),
+    Field(r"out-of-state tuition total", "tuition", "money", "Total program tuition for out-of-state students, as stated.", 1000, 400000, max_lag=1),
+    Field(r"international tuition total", "tuition", "money", "Total program tuition for international students, as stated.", 1000, 400000, max_lag=1),
+    Field(r"scholarship", "aid", "text", "Scholarships offered to students of this program (Yes/No + names/amounts).", max_lag=1),
+    Field(r"deposit", "aid", "text", "Enrollment deposit required to hold a seat (amount, or Yes/No).", max_lag=1),
     Field(r"experiential learning.*brief|experiential learning.*description", "experiential", "text",
           "One-sentence description of experiential learning (capstone, consulting projects, practicum)."),
     Field(r"experiential learning", "experiential", "yesno", "Does the program offer experiential learning courses or "
@@ -156,6 +157,38 @@ FIELDS = [
     Field(r"ranking.*best-masters", "rank_bestmasters", "text", "Best-Masters.com (Eduniversal) rank, with edition year."),
     Field(r"ranking.*(qs|topuniversities)", "rank_qs", "text", "QS / TopUniversities rank, with edition year."),
 ]
+
+FILLED = ("found", "found-prior", "computed", "carried-forward")  # statuses whose value goes into the workbook
+
+# U.S. News program profiles: the page that describes the row's program category, by sheet type. Online MBA and
+# online non-MBA business master's have their own profile pages (class stats, rank); residential programs only have
+# the business-school page, whose free stats are MBA-level but which lists the specialty ranks (Finance, Marketing...).
+USNEWS_PROFILE = {
+    "online-mba": r"usnews\.com/education/online-education/[a-z0-9-]+-[A-Z]+\d+/mba\b",
+    "online-business": r"usnews\.com/education/online-education/[a-z0-9-]+-[A-Z]+\d+/business\b",
+    "mba": r"usnews\.com/best-graduate-schools/top-business-schools/[a-z0-9-]+-\d+/?$",
+    "business-school": r"usnews\.com/best-graduate-schools/top-business-schools/[a-z0-9-]+-\d+/?$",
+}
+USNEWS_LABEL = {"online-mba": "U.S. News online MBA profile",
+                "online-business": "U.S. News online business master's (non-MBA) profile, covers all the school's programs",
+                "mba": "U.S. News business school profile (MBA figures)",
+                "business-school": "U.S. News business school profile"}
+USNEWS_STATS_GROUPS = ("scores", "class", "outcomes")
+
+
+def usnews_kind(sheet: str, program: str) -> str:
+    s = f"{sheet} {program}".casefold()
+    mba = bool(re.search(r"\bmba\b", s))
+    if "online" in s:
+        return "online-mba" if mba else "online-business"
+    return "mba" if mba else "business-school"
+
+
+def usnews_program_level(kind: str, url: str) -> bool:
+    """True if U.S. News figures on `url` describe the row's program (category), so they count for class stats.
+    The business-school page's stats are MBA figures: program-level only for MBA rows."""
+    return kind != "business-school" and bool(re.search(USNEWS_PROFILE[kind], url or ""))
+
 
 # Columns the pipeline never extracts: inputs, our own bookkeeping, or numbers computed from other columns.
 SKIP = re.compile(r"^(university( name)?|program name|website link|online|residential|curriculum)$|conferral|roi|"
