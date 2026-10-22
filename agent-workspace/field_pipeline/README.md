@@ -48,6 +48,7 @@ Useful variations:
 | Use a specific prior-year workbook for carried-forward values | `--prior "../OLD 2025-2026.xlsx"` |
 | Never carry values forward from last year's workbook | `--no-prior` |
 | Don't search for a Website Link on rows without one | `--no-find-links` |
+| Skip IPEDS (conferrals, graduate-share proxies) | `--no-ipeds` |
 | More detail in the terminal | `-v` |
 
 Every web page is opened in a real browser through browser-harness (plain HTTP is only used for PDFs and
@@ -80,6 +81,8 @@ Statuses in `decisions.csv`:
 | `found-prior` | Passed every check, but for an earlier year (`cycle` column) | yes, yellow (2025-26) / orange (2024-25) |
 | `computed` | Tuition total = per-credit x credit hours (site gave no total) | yes |
 | `carried-forward` | Nothing passed this year; value copied from last year's workbook | yes, grey |
+| `ipeds` | Average Conferrals from federal IPEDS completions data (3-year average) | yes |
+| `ipeds-proxy` | Female (%) / International (%) nothing else filled: share of the program's IPEDS *graduates*, not the entering class | yes, blue |
 | `not-found` | No fetched page states it | blank + comment |
 | `off-cycle` | Value is for a year older than the field allows, or a later year | blank + comment |
 | `other-program` | Value is for another program, undergrad, or school-wide where it must be program-specific | blank + comment |
@@ -107,6 +110,34 @@ acceptance rate, GPA, GMAT, work experience, international %, female %, average 
 these count as program-level values and their cell comment names the profile. The business-school page lists
 the specialty ranks (Finance, Marketing, Business Analytics, Accounting...); its free class stats are MBA figures,
 so they are only used for MBA sheets. `best-colleges` (undergraduate) pages are always rejected.
+
+### IPEDS (conferrals and graduate-share proxies)
+
+`ipeds.py` reads the NCES IPEDS Completions files (master's degrees per school and CIP code; downloaded once,
+about 25 MB, into `field_pipeline/data/ipeds/`). No browser and no LLM:
+
+- **Average Conferrals (past 3 years)** = mean master's degrees awarded over the last 3 published years.
+- **Female (%) / International (%)**, only when nothing else filled them: women / nonresident share of those
+  graduates, labelled `ipeds-proxy` with a blue fill. Graduates are not the entering class, so treat these as
+  estimates.
+
+The school is matched by its web domain and name ("PURDUE UNIVERSITY - WEST LAFAYETTE" → "Purdue
+University-Main Campus"). Systems that report online programs separately (Penn State World Campus, ASU Digital
+Immersion) get that unit on online sheets. The CIP code comes from the program's own pages when they state it
+(STEM programs do, for OPT: "CIP Code 45.0603"), else from the sheet (`CIP` in `ipeds.py`; Master of Business &
+Technology has none). All of a school's programs under one code are counted together (online + on-campus, or
+several STEM master's sharing 52.1301); the cell comment names the code and the yearly counts.
+
+### Class-profile pages
+
+Class stats often hide in animated counters, multi-column tables and infographics. The fetcher:
+
+- sets "by the numbers" counters to the target in their data attribute; if some still read 0 it scrolls the
+  page (with a forced render, since the pipeline's tab is in the background) and reads them again; counters
+  still at 0 become `[counter not loaded]` so a real-looking 0% is never extracted;
+- writes table cells with their column header (`Average GMAT | MSF: 640 | MSBA: 655`) when a table has 3+ columns;
+- keeps image alt text, SVG chart labels and `<dt>/<dd>` pairs as text;
+- OCRs large images on profile-like pages when `tesseract` is installed (`brew install tesseract`; optional).
 
 Pages and results are cached in `agent-workspace/field_pipeline/data/pipeline.sqlite`, so a rerun only does new
 work. To start completely fresh, delete that file.

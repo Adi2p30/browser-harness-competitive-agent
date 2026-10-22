@@ -278,3 +278,95 @@ def test_prior_record_match():
     prior = {("online mba", "boston college"): [{"Program Name": "Online MBA", "Average GMAT": 640, "_row": 4}]}
     assert prior_record(prior, Row("Online MBA", 5, "BOSTON COLLEGE", "online  mba", "", []))["_row"] == 4
     assert prior_record(prior, Row("Online MBA", 5, "BOSTON COLLEGE", "Hybrid MBA", "", [])) is None
+
+
+def test_html_to_page_profile_numbers():
+    html = """<title>Class Profile</title>
+    <table><thead><tr><th></th><th>MSF</th><th>MSBA</th></tr></thead>
+      <tr><td>Average GMAT</td><td>640</td><td>655</td></tr></table>
+    <dl><dt>Average age</dt><dd>24</dd></dl>
+    <img src="a.png" alt="45% international students"><img src="b.png" alt="School logo">
+    <svg><text>Work experience</text><text>18 months</text></svg>
+    <div role="img" aria-label="62% women"></div>"""
+    text = html_to_page(html, "https://x.edu/profile")[1]
+    assert "Average GMAT | MSF: 640 | MSBA: 655" in text
+    assert "Average age: 24" in text
+    assert "[image: 45% international students]" in text and "logo" not in text
+    assert "[graphic: Work experience 18 months]" in text and "[image: 62% women]" in text
+
+
+def _ipeds(schools, data):
+    from field_pipeline.ipeds import Ipeds
+    ip = Ipeds.__new__(Ipeds)
+    ip.years, ip.schools, ip.data = [2022, 2023, 2024], schools, {y: data for y in (2022, 2023, 2024)}
+    return ip
+
+
+def test_ipeds_match_and_completions():
+    schools = {"1": ("Purdue University-Main Campus", "", "www.purdue.edu/", "IN"),
+               "2": ("Purdue University Global", "", "www.purdueglobal.edu/", "IN"),
+               "3": ("Emory University", "", "www.emory.edu/", "GA"),
+               "4": ("Emory University-Oxford College", "", "www.oxford.emory.edu/", "GA"),
+               "5": ("Pennsylvania State University-Main Campus", "", "www.psu.edu/", "PA"),
+               "6": ("Pennsylvania State University-World Campus", "", "www.worldcampus.psu.edu/", "PA"),
+               "7": ("University of Washington-Seattle Campus", "", "www.washington.edu/", "WA"),
+               "8": ("University of Washington-Tacoma Campus", "", "www.tacoma.uw.edu/", "WA"),
+               "9": ("Columbia College", "", "www.ccis.edu/", "MO"),
+               "10": ("Columbia University in the City of New York", "", "www.columbia.edu/", "NY")}
+    data = {"1": [("45.0603", 30, 12, 20), ("52.0201", 100, 40, 10)], "6": [("52.0201", 50, 20, 1)]}
+    ip = _ipeds(schools, data)
+    assert ip.match("PURDUE UNIVERSITY - WEST LAFAYETTE", "https://business.purdue.edu/x") == "1"
+    assert ip.match("PURDUE UNIVERSITY - WEST LAFAYETTE") == "1"
+    assert ip.match("EMORY UNIVERSITY", "https://goizueta.emory.edu/msba") == "3"
+    assert ip.match("PENNSYLVANIA STATE UNIVERSITY", "https://www.worldcampus.psu.edu/x", True, ("52.0201",)) == "6"
+    assert ip.match("PENNSYLVANIA STATE UNIVERSITY", "https://www.psu.edu/x") == "5"
+    assert ip.match("UNIVERSITY OF WASHINGTON - SEATTLE", "https://foster.uw.edu/x") == "7"
+    assert ip.match("COLUMBIA UNIVERSITY") == "10"
+    got, _ = ip.lookup("PURDUE UNIVERSITY - WEST LAFAYETTE", "Online MS Economics", url="https://business.purdue.edu/x")
+    assert got.average == 30 and got.share(got.women) == 40.0 and got.share(got.nonresident) == 66.7
+    assert got.span == "2021-22 to 2023-24"
+    assert ip.lookup("PURDUE UNIVERSITY - WEST LAFAYETTE", "Master of Business & Technology")[1].startswith("no CIP")
+    assert "no master's degrees" in ip.lookup("EMORY UNIVERSITY", "MS Finance")[1]
+    assert ip.lookup("PURDUE UNIVERSITY - WEST LAFAYETTE", "MS Finance", stated_cip="52.0201")[0].average == 100
+
+
+def test_page_cip_and_sheet_codes():
+    from field_pipeline.ipeds import cip_for, page_cip
+    assert page_cip(["The program has been classified as STEM (CIP Code 45.0603: Econometrics)",
+                     "CIP code is 45.0603", "Eligible CIP Codes list"]) == "45.0603"
+    assert page_cip(["no code here"]) is None
+    assert cip_for("MS Finance - Residential")[0] == ("52.08",)
+    assert cip_for("Online MBA")[0] == ("52.0201",)
+    assert cip_for("1yr MBA")[0] == ("52.0201",)
+
+
+def test_settle_counters_scrolls_then_marks():
+    from field_pipeline.fetch import COUNTERS_JS, MARK_ZERO_JS, Fetcher
+
+    class H:
+        def __init__(self):
+            self.calls = []
+
+        def js(self, expr):
+            self.calls.append(expr)
+            if expr == COUNTERS_JS:
+                return [1, 1]  # one counter set from its attribute, one still at 0
+            return [100, 100] if expr.startswith("window.scrollBy") else None
+
+        def cdp(self, method, **kw):
+            self.calls.append(method)
+
+        def activate_tab(self, tab):
+            self.calls.append("activate")
+
+        def wait(self, s):
+            pass
+
+    f = Fetcher("none")
+    f._tab = "T1"
+    h = H()
+    assert f._settle_counters(h, activate=True) == [1, 1]
+    assert "activate" in h.calls and "Page.captureScreenshot" in h.calls and MARK_ZERO_JS in h.calls
+    h = H()
+    f._settle_counters(h, activate=False)
+    assert "activate" not in h.calls

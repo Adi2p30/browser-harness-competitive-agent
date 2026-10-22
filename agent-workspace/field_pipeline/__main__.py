@@ -10,6 +10,8 @@
   4 retrieve   BM25 top chunks per field group
   5 extract    one RCAC call per field group with only those chunks -> value + verbatim quote
   6 validate   quote on page, digits in quote, range, 2026-2027 cycle (code, not the model)
+  + IPEDS      federal completions data: Average Conferrals, and women / international share of graduates as a
+               labelled proxy for Female (%) / International (%) cells still blank (no browser, no LLM)
   7 write      <workbook>_field_pipeline.xlsx (value + source comment + hyperlink) and <...>_decisions.csv
 Pages and results live in field_pipeline/data/pipeline.sqlite, so reruns reuse them.
 """
@@ -27,6 +29,7 @@ from .discover import Discoverer, foreign_program, program_words
 from .extract import better, extract_group
 from .fetch import BrowserUnavailable, Fetcher
 from .fields import FILLED, plan, usnews_kind
+from .ipeds import Ipeds, page_cip
 from .retrieve import chunk_pages
 from .store import Store
 from .workbook import read_rows, read_values, write
@@ -36,12 +39,41 @@ COMPUTED_TOTALS = (("In-State Tuition Total", "In-State Tuition Per Credit"),
                    ("Out-of-State Tuition Total", "Out-of-State Tuition Per Credit"),
                    ("International Tuition Total", "International Tuition Per Credit"))
 RETRY = ("not-found", "bad-quote", "bad-value", "other-program", "off-cycle", "found-prior")  # second-pass statuses
-# Cell colours for values that are not 2026-2027 facts: one year back, two years back, last year's workbook.
-FILL = {"2025-2026": "FFF2CC", "2024-2025": "FCE4D6", "carried-forward": "E7E6E6"}
+# Cell colours for values that are not 2026-2027 facts: one year back, two years back, last year's workbook,
+# IPEDS graduates standing in for the entering class.
+FILL = {"2025-2026": "FFF2CC", "2024-2025": "FCE4D6", "carried-forward": "E7E6E6", "ipeds-proxy": "DDEBF7"}
+CONFERRALS = re.compile(r"conferral", re.I)
+FEMALE, INTERNATIONAL = re.compile(r"^(female|women)\s*(\(%\)|%)", re.I), re.compile(r"^international\s*(\(%\)|%)", re.I)
 
 
 def fill_for(r: dict) -> str | None:
-    return FILL["carried-forward"] if r["status"] == "carried-forward" else FILL.get(r.get("cycle") or "")
+    return FILL.get(r["status"]) or FILL.get(r.get("cycle") or "")
+
+
+def apply_ipeds(ip: Ipeds, store: Store, row, wanted: dict, results: dict, conferral_cols: list[str]) -> None:
+    """Average Conferrals from IPEDS, and the women / nonresident share of graduates for Female (%) /
+    International (%) cells nothing else filled. Uses the CIP code the program's pages state, else the sheet's."""
+    proxy_cols = [c for c in wanted if (FEMALE.search(c) or INTERNATIONAL.search(c))
+                  and results.get(c, {}).get("status") not in FILLED]
+    if not conferral_cols and not proxy_cols:
+        return
+    stated = page_cip([p["text"] for p in store.row_pages(row.key)])
+    got, why = ip.lookup(row.university, row.sheet, row.program, row.start_url, stated)
+    if got is None:
+        for c in conferral_cols:
+            results[c] = {"status": "not-found", "detail": f"IPEDS: {why}"}
+        return
+    url = f"https://nces.ed.gov/collegenavigator/?id={got.unitid}"
+    what = f"IPEDS completions {got.span}, {got.school}, {got.cips}: master's degrees per year {got.totals}"
+    for c in conferral_cols:
+        results[c] = {"value": str(round(got.average)), "status": "ipeds", "url": url, "quote": None, "detail": what,
+                      "cycle": f"IPEDS {got.span}"}
+    for c in proxy_cols:
+        n = got.women if FEMALE.search(c) else got.nonresident
+        if (share := got.share(n)) is not None:
+            results[c] = {"value": f"{share:g}%", "status": "ipeds-proxy", "url": url, "quote": None,
+                          "detail": f"share of master's GRADUATES ({n} of {sum(got.totals)}), not the entering class; "
+                                    f"{what}", "cycle": f"IPEDS {got.span}"}
 
 
 def prior_record(prior: dict, row) -> dict | None:
@@ -116,6 +148,7 @@ def main() -> None:
                     "; default: the one 'OLD *.xlsx' next to the input, if there is exactly one")
     ap.add_argument("--no-prior", action="store_true", help="never carry values forward from last year's workbook")
     ap.add_argument("--no-find-links", action="store_true", help="skip rows without a Website Link instead of searching")
+    ap.add_argument("--no-ipeds", action="store_true", help="skip IPEDS (Average Conferrals, graduate-share proxies)")
     ap.add_argument("--db", type=Path, help="SQLite path (default field_pipeline/data/pipeline.sqlite)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
@@ -141,6 +174,12 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
     prior_path = None if args.no_prior else args.prior or (olds[0] if len(olds) == 1 else None)
     prior = read_values(str(prior_path)) if prior_path else {}
     log.info("last year's workbook: %s", prior_path or "none")
+    ip = None
+    if not args.no_ipeds:
+        try:
+            ip = Ipeds()
+        except Exception as exc:  # NCES unreachable on a first run: everything else still works
+            log.warning("IPEDS unavailable (%s); Average Conferrals left blank", exc)
     if args.only:
         rows = [r for r in rows if any(o.casefold() in r.university.casefold() for o in args.only)]
     rows = rows[:args.limit] if args.limit else rows
@@ -151,11 +190,13 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
     for i, row in enumerate(rows, 1):
         fields, links, unmapped = plan(columns[row.sheet])
         wanted = {c: f for c, f in fields.items() if args.overwrite or c in row.blanks}
+        conferral_cols = [c for c in columns[row.sheet] if ip and c and CONFERRALS.search(c)
+                          and (args.overwrite or c in row.blanks)]
         log.info("=== [%d/%d] %s | %s | %s | %d field(s)", i, len(rows), row.sheet, row.university,
-                 row.program or "-", len(wanted))
+                 row.program or "-", len(wanted) + len(conferral_cols))
         if unmapped:
             log.debug("unmapped columns: %s", unmapped)
-        if not wanted:
+        if not wanted and not conferral_cols:
             continue
         old = prior_record(prior, row) if prior else None
         if not row.start_url and old and old.get("Website Link"):
@@ -182,15 +223,13 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
                               f"field-pipeline {today}: found by web search, please check it is the right program",
                               row.start_url, "FFF2CC"))
         if not row.start_url:
-            log.warning("no Website Link -> skipped")
-            for c in wanted:
-                decisions.append((row, c, {"status": "no-start-link"}))
-            continue
+            log.warning("no Website Link -> no web research for this row")
+        missing = "not-found" if row.start_url else "no-start-link"
 
         groups = sorted({f.group for f in wanted.values()})
         usnews = usnews_kind(row.sheet, row.program)
         stored = {} if args.reextract else store.results(row.key)
-        todo = [] if stopped else [g for g in groups if any(c not in stored for c, f in wanted.items() if f.group == g)]
+        todo = [] if stopped or not row.start_url else [g for g in groups if any(c not in stored for c, f in wanted.items() if f.group == g)]
         results = {c: r for c, r in stored.items() if c in wanted}
         if todo:
             if not begun:
@@ -257,14 +296,18 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
 
         # last resort: last year's researched value for cells still blank (never for fields without a fallback year)
         for c, f in wanted.items():
-            r = results.get(c, {"status": "not-found"})
-            if old and r["status"] not in FILLED and f.max_lag >= 1 and old.get(c) not in (None, ""):
+            r = results.get(c, {"status": missing})
+            if (old and r["status"] not in FILLED and f.max_lag >= 1
+                    and not re.fullmatch(r"[-\u2013\u2014?.\s]*", str(old.get(c) or ""))):  # blank or a "-" placeholder
                 results[c] = {"value": old[c], "status": "carried-forward", "url": None, "quote": None,
                               "detail": f"value from {prior_path.name} row {old['_row']} (this year: {r['status']})",
                               "cycle": "2025-2026 workbook"}
 
-        for c in wanted:
-            r = results.get(c, {"status": "not-found"})
+        if ip:
+            apply_ipeds(ip, store, row, wanted, results, conferral_cols)
+
+        for c in [*wanted, *conferral_cols]:
+            r = results.get(c, {"status": missing})
             tally[r["status"]] += 1
             decisions.append((row, c, r))
             if r["status"] in FILLED:
