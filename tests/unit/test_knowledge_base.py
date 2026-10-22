@@ -30,5 +30,6 @@ def test_match_prior_program_tiebreak():
 
 
 def test_text_and_columns():
+    assert text("=(($Q2*AC2)/SUM($AR2:$AS2))*12") == ""
     assert text("-") == "" and text(" — ") == "" and text(3.0) == "3" and text("$1,250 ") == "$1,250"
     assert col_key("Female %") == col_key("Female (%)")

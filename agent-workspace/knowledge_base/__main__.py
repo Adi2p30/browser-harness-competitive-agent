@@ -3,7 +3,7 @@
   python -m knowledge_base "../EDIT Competitive Analysis Research 2026-2027.xlsx"
 
 Each fact is one (program, field) value with its cycle, status, source URL and quote. A value comes from, in order:
-  1 this year's field_pipeline decisions.csv (found / found-prior / computed / carried-forward)
+  1 this year's field_pipeline decisions.csv (found / found-prior / computed / carried-forward / ipeds)
   2 a value already typed into this year's workbook
   3 last year's workbook (cycle 2025-2026), matched by school name; schools only in last year's peer set are kept
 Writes <workbook>_kb/kb.sqlite (for queries) and <workbook>_kb/competitive_analysis.html (open in any browser;
@@ -17,13 +17,12 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-from field_pipeline.fields import LINK, SKIP, field_for, link_target
+from field_pipeline.fields import FILLED, LINK, SKIP, field_for, link_target
 from field_pipeline.validate import NUMERIC, to_number
 from field_pipeline.workbook import headers, read_rows, read_values
 
 from openpyxl import load_workbook
 
-KEEP = ("found", "found-prior", "computed", "carried-forward")  # decisions.csv statuses that carry a value
 GROUP_LABELS = {
     "basics": "Basics", "scores": "Test scores & GPA", "class": "Class profile", "structure": "Program structure",
     "campus": "On-campus", "deadlines": "Deadlines", "requirements": "Admissions", "tuition": "Tuition",
@@ -37,13 +36,13 @@ ID_COLUMNS = re.compile(r"^(university( name)?|school\s*/\s*college( name)?|prog
 
 
 def text(v) -> str:
-    """Cell value as text; "" for blanks and placeholder dashes."""
+    """Cell value as text; "" for blanks, placeholder dashes and Excel formulas (last year's ROI columns)."""
     if hasattr(v, "strftime"):
         return v.strftime("%Y-%m-%d")
     if isinstance(v, float) and v.is_integer():
         v = int(v)
     v = " ".join(str(v).split())
-    return "" if re.fullmatch(r"[-–—?.\s]*", v) else v
+    return "" if re.fullmatch(r"[-–—?.\s]*", v) or v.startswith("=") else v
 
 
 def current_values(path: str) -> dict[tuple[str, int], dict]:
@@ -64,7 +63,7 @@ def decisions(path: Path) -> dict[tuple[str, int, str], dict]:
     if not path.exists():
         return {}
     with open(path, newline="", encoding="utf-8") as f:
-        return {(d["sheet"], int(d["row"]), d["field"]): d for d in csv.DictReader(f) if d["status"] in KEEP}
+        return {(d["sheet"], int(d["row"]), d["field"]): d for d in csv.DictReader(f) if d["status"] in FILLED}
 
 
 def words(s) -> list[str]:
@@ -167,6 +166,8 @@ def build(workbook: str, prior_path: str | None, decisions_path: Path) -> dict:
                 if d := found.get((sheet, row.row, name)):
                     values[name] = {"v": text(d["value"]), "c": d["cycle"] or "2026-2027", "s": d["status"],
                                     "u": d["source_url"], "q": d["quote"]}
+                    if d["status"].startswith("ipeds"):
+                        values[name]["d"] = d["detail"]
                 elif text(typed.get(name) or ""):
                     values[name] = {"v": text(typed[name]), "c": "2026-2027", "s": "entered", "u": link, "q": ""}
                 elif name in old:

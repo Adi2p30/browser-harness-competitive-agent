@@ -82,6 +82,7 @@ td .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin
 .tag { border-radius: 4px; padding: 0 5px; font-size: 10.5px; font-weight: 600; }
 .tag.prior { background: var(--prior); color: var(--prior-ink); }
 .tag.entered { background: var(--entered); color: var(--entered-ink); }
+.tag.ipeds { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
 .delta.up { color: var(--bad); } .delta.down { color: var(--good); }
 .delta.neutral { color: var(--muted); }
 td.empty { color: var(--muted); }
@@ -105,6 +106,7 @@ td.empty { color: var(--muted); }
     <span><i class="sw" style="background:var(--panel)"></i>2026-27, verified on the source page</span>
     <span><i class="sw" style="background:var(--entered)"></i>Typed into the workbook</span>
     <span><i class="sw" style="background:var(--prior)"></i>Earlier cycle (2025-26 or older)</span>
+    <span><span class="tag ipeds">IPEDS</span> Federal degree data; "graduates" = share of graduates, not the entering class</span>
     <span>Hover a value for the quote it came from &middot; ↗ opens the source</span>
   </div>
 </header>
@@ -255,9 +257,11 @@ function renderGrid() {
       const x = fact(p.id, f.name);
       const cls = p.purdue ? "purdue" : "";
       if (!x) return `<td class="${cls} empty">—</td>`;
-      const tag = x.s === "entered" ? `<span class="tag entered">workbook</span>`
+      const tag = x.s === "ipeds-proxy" ? `<span class="tag ipeds">IPEDS graduates</span>`
+        : x.s === "ipeds" ? `<span class="tag ipeds">IPEDS 3-yr avg</span>`
+        : x.s === "entered" ? `<span class="tag entered">workbook</span>`
         : x.c && x.c !== CURRENT ? `<span class="tag prior">${esc(x.c.replace(/^(\d{4})-\d{2}(\d{2})$/, "$1-$2"))}</span>` : "";
-      const tip = x.q ? `“${x.q}”` : x.s === "prior-year" ? "From last year's workbook" : "";
+      const tip = x.q ? `“${x.q}”` : x.d || (x.s === "prior-year" ? "From last year's workbook" : "");
       return `<td class="${cls}"><div class="v" title="${esc(tip)}">${esc(x.v)}</div>
         <div class="meta">${tag}${deltaHtml(x, base, f.kind)}${x.u ? `<a class="src" href="${esc(x.u)}" target="_blank" rel="noopener" title="${esc(x.u)}">↗</a>` : ""}</div></td>`;
     }).join("") + `</tr>`;
