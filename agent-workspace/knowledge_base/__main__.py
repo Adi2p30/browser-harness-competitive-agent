@@ -3,7 +3,8 @@
   python -m knowledge_base "../EDIT Competitive Analysis Research 2026-2027.xlsx"
 
 Each fact is one (program, field) value with its cycle, status, source URL and quote. A value comes from, in order:
-  1 this year's field_pipeline decisions.csv (found / found-prior / computed / carried-forward / ipeds)
+  1 this year's field_pipeline results (found / found-prior / computed / carried-forward / ipeds): every version
+    in <workbook>_field_pipeline/runs/, the newest run that filled a cell wins
   2 a value already typed into this year's workbook
   3 last year's workbook (cycle 2025-2026), matched by school name; schools only in last year's peer set are kept
 Writes <workbook>_kb/kb.sqlite (for queries) and <workbook>_kb/competitive_analysis.html (open in any browser;
@@ -59,11 +60,20 @@ def current_values(path: str) -> dict[tuple[str, int], dict]:
     return out
 
 
-def decisions(path: Path) -> dict[tuple[str, int, str], dict]:
-    if not path.exists():
-        return {}
-    with open(path, newline="", encoding="utf-8") as f:
-        return {(d["sheet"], int(d["row"]), d["field"]): d for d in csv.DictReader(f) if d["status"] in FILLED}
+def versions(workbook: Path) -> list[Path]:
+    """decisions.csv of every field_pipeline run, oldest first (version folders are named by start time); the
+    decisions.csv that runs wrote before versioning counts as the oldest."""
+    base = workbook.with_name(f"{workbook.stem}_field_pipeline")
+    return [p for p in [base / "decisions.csv", *sorted(base.glob("runs/*/decisions.csv"))] if p.exists()]
+
+
+def decisions(paths: list[Path]) -> dict[tuple[str, int, str], dict]:
+    """Filled cells; a later file replaces an earlier one's value for the same cell, a blank never does."""
+    out = {}
+    for path in paths:
+        with open(path, newline="", encoding="utf-8") as f:
+            out.update({(d["sheet"], int(d["row"]), d["field"]): d for d in csv.DictReader(f) if d["status"] in FILLED})
+    return out
 
 
 def words(s) -> list[str]:
@@ -96,9 +106,9 @@ def match_prior(univ: str, program: str, recs: list[tuple[str, dict]], used: set
     return cands[0] if len(cands) == 1 else None
 
 
-def build(workbook: str, prior_path: str | None, decisions_path: Path) -> dict:
+def build(workbook: str, prior_path: str | None, decision_files: list[Path]) -> dict:
     cols, rows = read_rows(workbook)
-    now, found = current_values(workbook), decisions(decisions_path)
+    now, found = current_values(workbook), decisions(decision_files)
     prior: dict[str, list[tuple[str, dict]]] = {}
     for (sheet, univ), recs in (read_values(prior_path) if prior_path else {}).items():
         if not JUNK.fullmatch(univ):
@@ -209,7 +219,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("workbook", type=Path)
     ap.add_argument("--prior", type=Path, help="last year's workbook (default: the one OLD *.xlsx next to it)")
-    ap.add_argument("--decisions", type=Path, help="field_pipeline decisions.csv (default: <workbook>_field_pipeline/)")
+    ap.add_argument("--decisions", type=Path, action="append",
+                    help="field_pipeline decisions.csv to use (repeatable; default: every version of the workbook's runs)")
     ap.add_argument("--out", type=Path, help="output folder (default: <workbook>_kb/)")
     args = ap.parse_args()
     wb = args.workbook
@@ -217,8 +228,8 @@ def main() -> None:
     prior = args.prior or (olds[0] if len(olds) == 1 else None)
     out = args.out or wb.with_name(f"{wb.stem}_kb")
     out.mkdir(parents=True, exist_ok=True)
-    kb = build(str(wb), str(prior) if prior else None,
-               args.decisions or wb.with_name(f"{wb.stem}_field_pipeline") / "decisions.csv")
+    files = args.decisions or versions(wb)
+    kb = build(str(wb), str(prior) if prior else None, files)
     write_sqlite(kb, out / "kb.sqlite")
     page = (Path(__file__).with_name("template.html").read_text(encoding="utf-8")
             .replace("/*KB_DATA*/null", json.dumps(kb, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")))
@@ -226,7 +237,7 @@ def main() -> None:
     by = {}
     for f in kb["facts"]:
         by[f["s"]] = by.get(f["s"], 0) + 1
-    print(f"{len(kb['programs'])} programs, {len(kb['facts'])} facts {by} -> {out}")
+    print(f"{len(files)} pipeline version(s); {len(kb['programs'])} programs, {len(kb['facts'])} facts {by} -> {out}")
 
 
 if __name__ == "__main__":

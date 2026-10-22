@@ -11,7 +11,8 @@ uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
 
 Each (program, field) value comes from, in order:
 
-1. this year's `field_pipeline` results (`<workbook>_field_pipeline/decisions.csv`): source URL and quote kept
+1. this year's `field_pipeline` results, from every run version (`<workbook>_field_pipeline/runs/*/decisions.csv`;
+   the newest run that filled a cell wins): source URL and quote kept
 2. a value already typed into this year's workbook
 3. last year's workbook (`OLD *.xlsx`, or `--prior`). Schools are matched by name ("Purdue University" =
    "PURDUE UNIVERSITY - WEST LAFAYETTE"); schools that were only in last year's peer set are kept and marked.

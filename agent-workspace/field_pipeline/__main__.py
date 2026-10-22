@@ -12,16 +12,21 @@
   6 validate   quote on page, digits in quote, range, 2026-2027 cycle (code, not the model)
   + IPEDS      federal completions data: Average Conferrals, and women / international share of graduates as a
                labelled proxy for Female (%) / International (%) cells still blank (no browser, no LLM)
-  7 write      <workbook>_field_pipeline.xlsx (value + source comment + hyperlink) and <...>_decisions.csv
-Pages and results live in field_pipeline/data/pipeline.sqlite, so reruns reuse them.
+  7 write      a new version folder per run: <workbook>_field_pipeline/runs/<date_time>/ with the filled workbook
+               copy (value + source comment + hyperlink), decisions.csv, run.log and llm.jsonl; every run is
+               listed in <workbook>_field_pipeline/runs.csv. Earlier versions are never overwritten.
+Pages and results live in field_pipeline/data/pipeline.sqlite, so reruns reuse them (--fresh: nothing reused).
 """
 import argparse
 import csv
 import logging
 import re
-from collections import Counter, defaultdict
+import shlex
+import sys
+import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from . import llm
@@ -31,7 +36,7 @@ from .fetch import BrowserUnavailable, Fetcher
 from .fields import FILLED, plan, usnews_kind
 from .ipeds import Ipeds, page_cip
 from .retrieve import chunk_pages
-from .store import Store
+from .store import DEFAULT_DB, Store
 from .workbook import read_rows, read_values, write
 
 log = logging.getLogger("field_pipeline")
@@ -143,6 +148,9 @@ def main() -> None:
     ap.add_argument("--per-group", type=int, default=4, help="pages opened per field group in round 1 (default 4)")
     ap.add_argument("--reextract", action="store_true", help="ask the LLM again even if results are stored")
     ap.add_argument("--overwrite", action="store_true", help="research cells that already have a value")
+    ap.add_argument("--fresh", action="store_true",
+                    help="new research for every cell: pages fetched again, nothing reused from earlier runs, cells "
+                         "that already have a value researched too (= --overwrite --reextract + fresh pages)")
     ap.add_argument("--workers", type=int, default=2, help="concurrent RCAC calls per row (default 2)")
     ap.add_argument("--chunks", type=int, default=10, help="text chunks (~1,500 chars each) per LLM call (default 10)")
     ap.add_argument("--no-second-pass", action="store_true",
@@ -155,20 +163,57 @@ def main() -> None:
     ap.add_argument("--db", type=Path, help="SQLite path (default field_pipeline/data/pipeline.sqlite)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
+    if args.fresh:
+        args.overwrite = args.reextract = True
 
     src = Path(args.xlsx).resolve()
-    out_dir = src.with_name(f"{src.stem}_field_pipeline")
+    started = time.time()
+    out_dir = version_dir(src, args.fresh)
     setup_logging(out_dir, args.verbose)
+    log.info("version folder: %s", out_dir)
     llm.api_key()  # fail fast without a key
-    store = Store(args.db) if args.db else Store()
+    store = Store(args.db or DEFAULT_DB, fresh_since=started if args.fresh else None)
     fetcher = Fetcher(args.browser, args.session_minutes, args.schools_per_session, args.http_fallback, args.foreground)
+    summary, status = {}, "failed"
     try:
-        run(args, src, out_dir, store, fetcher)
+        summary = run(args, src, out_dir, store, fetcher)
+        status = "done"
+    except KeyboardInterrupt:
+        status = "interrupted"
+        raise
     finally:
         fetcher.close()
+        record_run(out_dir, started, status, args, summary)
 
 
-def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
+def version_dir(src: Path, fresh: bool) -> Path:
+    """A new folder for this run's outputs: <workbook>_field_pipeline/runs/<YYYY-MM-DD_HHMMSS>[_fresh]."""
+    runs = src.with_name(f"{src.stem}_field_pipeline") / "runs"
+    name = datetime.now().strftime("%Y-%m-%d_%H%M%S") + ("_fresh" if fresh else "")
+    out, n = runs / name, 2
+    while out.exists():  # two runs started in the same second
+        out, n = runs / f"{name}-{n}", n + 1
+    out.mkdir(parents=True)
+    return out
+
+
+def record_run(out_dir: Path, started: float, status: str, args, summary: dict) -> None:
+    """Append this run to runs.csv next to the runs/ folder (the list of versions)."""
+    index = out_dir.parent.parent / "runs.csv"
+    new = not index.exists()
+    with open(index, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["version", "started", "minutes", "status", "fresh", "browser", "sheets", "only", "limit",
+                        "rows", "cells_written", "status_counts", "command"])
+        w.writerow([out_dir.name, datetime.fromtimestamp(started).isoformat(timespec="seconds"),
+                    round((time.time() - started) / 60, 1), status, args.fresh, args.browser,
+                    "; ".join(args.sheet or ["all"]), "; ".join(args.only or []), args.limit or "",
+                    summary.get("rows", ""), summary.get("written", ""), summary.get("tally", ""),
+                    shlex.join(["python", "-m", "field_pipeline", *sys.argv[1:]])])
+
+
+def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
     discoverer = Discoverer(store, fetcher, per_group=args.per_group, use_search=not args.no_search)
     today = date.today().isoformat()
 
@@ -330,7 +375,7 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
             if (args.overwrite or link_col in row.blanks) and r.get("status") in ("found", "found-prior") and r.get("url"):
                 cells.append((row.sheet, row.row, link_col, r["url"], f"page where '{pair}' was found", r["url"]))
 
-    dest = src.with_name(f"{src.stem}_field_pipeline{src.suffix}")
+    dest = out_dir / f"{src.stem}_field_pipeline{src.suffix}"
     written = write(str(src), str(dest), cells)
     with open(out_dir / "decisions.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -339,9 +384,6 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
         for row, c, r in decisions:
             w.writerow([row.sheet, row.row, row.university, row.program, c, r.get("status"), r.get("cycle"),
                         r.get("value"), r.get("url"), r.get("quote"), r.get("detail")])
-    by_group = defaultdict(Counter)
-    for row, c, r in decisions:
-        by_group[c][r["status"]] += 1
     total = sum(tally.values())
     log.info("DONE: %d cells written -> %s", written, dest)
     log.info("status counts: %s | fill rate %.0f%% (2026-2027 only: %.0f%%)", dict(tally),
@@ -350,6 +392,7 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> None:
     log.info("browser pages: %d ok, %d failed | cloud sessions: %d | searches: %s, disabled: %s", fetcher.browser_ok,
              fetcher.browser_fail, fetcher.sessions, discoverer.searcher.stats, sorted(discoverer.searcher.disabled) or "none")
     print(f"\n{written} cells -> {dest}\ndecisions -> {out_dir / 'decisions.csv'}\n{dict(tally)}")
+    return {"rows": len(rows), "written": written, "tally": dict(tally)}
 
 
 if __name__ == "__main__":

@@ -41,6 +41,7 @@ Useful variations:
 | Cloud session length limit (default 15 min) | `--session-minutes 15` |
 | Allow plain HTTP when the browser can't read a page | `--http-fallback` |
 | Debugging only: no browser at all | `--browser none` |
+| New research for every cell, ignoring everything cached (pages, results, earlier links) | `--fresh` |
 | Ask the LLM again for schools already done | `--reextract` |
 | Also research cells that already have a value | `--overwrite` |
 | Skip the Bing search step | `--no-search` |
@@ -66,15 +67,25 @@ Expect about 5 minutes per school with the cloud browser.
 
 ## Output
 
-Next to the input workbook:
+Every run writes a new version folder; nothing from an earlier run is overwritten, and the input workbook is
+never modified:
 
-- `EDIT Competitive Analysis Research 2026-2027_field_pipeline.xlsx` — a copy with the filled cells. Each filled
-  cell has a comment (status, source URL, quote) and a hyperlink to the source. Cells left blank get a comment
-  saying why. The original workbook is never modified.
-- `EDIT Competitive Analysis Research 2026-2027_field_pipeline/`
-  - `decisions.csv` — one line per researched cell: status, value, source URL, quote, reason. Review this first.
-  - `run.log` — every page fetched and every decision.
-  - `llm.jsonl` — every prompt sent to RCAC and its reply.
+```
+EDIT Competitive Analysis Research 2026-2027_field_pipeline/
+  runs.csv                       one line per run: version, start, minutes, done/failed/interrupted, options,
+                                 cells written, status counts, the exact command
+  runs/2026-10-22_183419/        a normal run
+  runs/2026-10-23_090102_fresh/  a --fresh run
+    EDIT Competitive Analysis Research 2026-2027_field_pipeline.xlsx
+                                 copy of the input with the filled cells: each has a comment (status, source
+                                 URL, quote) and a hyperlink; cells left blank get a comment saying why
+    decisions.csv                one line per researched cell: status, value, source URL, quote, reason
+    run.log                      every page fetched and every decision
+    llm.jsonl                    every prompt sent to RCAC and its reply
+```
+
+Each run starts from the input workbook, so a version holds only what that run filled. `python -m
+knowledge_base` combines all versions (the newest run that filled a cell wins; a later blank never erases a value).
 
 Statuses in `decisions.csv`:
 

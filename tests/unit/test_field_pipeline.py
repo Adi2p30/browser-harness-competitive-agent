@@ -387,3 +387,29 @@ def test_browser_defaults_to_local(monkeypatch):
     monkeypatch.setenv("BROWSER_USE_API_KEY", "bu_test")
     assert Fetcher().mode == "local"
     assert Fetcher("auto").mode == "cloud"
+
+
+def test_store_fresh_hides_earlier_work(tmp_path):
+    import time
+    from field_pipeline.store import Store
+    db = tmp_path / "p.sqlite"
+    old = Store(db)
+    old.save_page({"url": "https://x.edu/a", "status": "ok", "text": "old"})
+    old.save_result("k", "Average GMAT", "scores", {"status": "found", "value": "600"})
+    old.add_candidate("k", "https://x.edu/a", "start", 1, "start")
+    fresh = Store(db, fresh_since=time.time() + 1)
+    assert fresh.page("https://x.edu/a") is None and fresh.results("k") == {} and fresh.start_url("k") is None
+    assert Store(db).page("https://x.edu/a")["text"] == "old"  # a normal run still reuses it
+
+
+def test_version_folders_never_overwrite(tmp_path):
+    from argparse import Namespace
+    from field_pipeline.__main__ import record_run, version_dir
+    src = tmp_path / "Book.xlsx"
+    a, b = version_dir(src, False), version_dir(src, True)
+    assert a != b and a.parent == b.parent == tmp_path / "Book_field_pipeline" / "runs" and b.name.endswith("_fresh")
+    args = Namespace(fresh=False, browser="local", sheet=None, only=None, limit=None)
+    record_run(a, 0, "done", args, {"rows": 2, "written": 5, "tally": {"found": 5}})
+    record_run(b, 0, "failed", args, {})
+    lines = (tmp_path / "Book_field_pipeline" / "runs.csv").read_text().splitlines()
+    assert len(lines) == 3 and lines[1].startswith(a.name) and ",failed," in lines[2]
