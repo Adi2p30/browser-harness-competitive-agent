@@ -380,3 +380,10 @@ def test_settle_counters_scrolls_then_marks():
     f._settle_counters(h, activate=True)
     acts = [c for c in h.calls if c.startswith("activate")]
     assert acts == ["activate T1", "activate U1"]
+
+
+def test_browser_defaults_to_local(monkeypatch):
+    from field_pipeline.fetch import Fetcher
+    monkeypatch.setenv("BROWSER_USE_API_KEY", "bu_test")
+    assert Fetcher().mode == "local"
+    assert Fetcher("auto").mode == "cloud"

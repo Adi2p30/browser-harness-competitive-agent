@@ -13,7 +13,7 @@ value only if code can verify its quote on the page.
 2. Create `.env` in the repo root (it is git-ignored) with your keys:
    ```
    RCAC_API_KEY=<your RCAC GenAI Studio key>
-   BROWSER_USE_API_KEY=<your Browser Use key>   # optional: cloud browser for sites that block plain requests
+   BROWSER_USE_API_KEY=<your Browser Use key>   # optional: only used with --browser cloud (billed)
    ```
 3. Make sure the workbook is in the repo root: `EDIT Competitive Analysis Research 2026-2027.xlsx`.
 
@@ -35,7 +35,7 @@ Useful variations:
 | First N rows only | `--limit 3` |
 | Several sheets | `--sheet "Online MS Economics" --sheet "Online MSGSCM"` |
 | Every sheet | leave out `--sheet` |
-| Your own Chrome instead of the cloud | `--browser local` (enable `chrome://inspect/#remote-debugging` first) |
+| Browser Use cloud browser instead of your Chrome (billed) | `--browser cloud` |
 | Local Chrome: briefly show the pipeline's tab so scroll-only counters load | `--foreground` |
 | Schools per cloud session (default 2) | `--schools-per-session 3` |
 | Cloud session length limit (default 15 min) | `--session-minutes 15` |
@@ -53,8 +53,10 @@ Useful variations:
 | More detail in the terminal | `-v` |
 
 Every web page is opened in a real browser through browser-harness (plain HTTP is only used for PDFs and
-sitemap files). `--browser auto` (the default) uses the Browser Use cloud browser when `BROWSER_USE_API_KEY` is
-set, else your local Chrome. If the browser can't be reached the run stops instead of quietly using HTTP.
+sitemap files). By default that is your own Chrome (`--browser local`, free; enable
+`chrome://inspect/#remote-debugging` first). The Browser Use cloud browser is used only with `--browser cloud`
+(or `--browser auto` when `BROWSER_USE_API_KEY` is set), even if the key is in `.env`. If the browser can't be
+reached the run stops instead of quietly using HTTP.
 
 Cloud sessions are batched: a fresh cloud browser is started every `--schools-per-session` schools (default 2) or
 before `--session-minutes` (default 15) runs out, and again if a session dies mid-school. The pipeline always
@@ -189,7 +191,7 @@ uv run --with pytest --with openpyxl --with beautifulsoup4 --with requests --wit
 
 - Rows without a Website Link are skipped (fill the link in the workbook).
 - If Browser Use runs out of credits (HTTP 402) the run stops researching, writes everything finished plus the
-  stored results of the remaining rows, and stops the browser; rerun later (or with `--browser local`) to continue.
+  stored results of the remaining rows, and stops the browser; rerun later (or without `--browser cloud`) to continue.
 - usnews.com is strict with automated browsers; if a profile page can't be opened, U.S. News values come from the
   school quoting its rank. Business-school pages hide most class stats behind U.S. News Compass (paid).
 - DuckDuckGo shows a CAPTCHA to the cloud browser, so it is effectively off; Bing works but ignores `site:`,

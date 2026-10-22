@@ -174,7 +174,7 @@ class Fetcher:
     Cloud mode (Browser Use Cloud) rotates sessions: a fresh cloud browser every `schools_per_session` schools or
     before `session_minutes` runs out, and again if a session dies mid-school."""
 
-    def __init__(self, mode: str = "auto", session_minutes: int = 15, schools_per_session: int = 2,
+    def __init__(self, mode: str = "local", session_minutes: int = 15, schools_per_session: int = 2,
                  http_fallback: bool = False, foreground: bool = False):
         if mode == "auto":
             mode = "cloud" if _env_has("BROWSER_USE_API_KEY") else "local"

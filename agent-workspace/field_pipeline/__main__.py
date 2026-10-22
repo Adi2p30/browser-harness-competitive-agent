@@ -128,9 +128,9 @@ def main() -> None:
     ap.add_argument("--sheet", action="append", help="sheet to fill (repeatable); default: every program sheet")
     ap.add_argument("--only", action="append", help="only rows whose university contains this text (repeatable)")
     ap.add_argument("--limit", type=int, help="stop after this many rows")
-    ap.add_argument("--browser", choices=("auto", "cloud", "local", "none"), default="auto",
-                    help="cloud = Browser Use Cloud (needs BROWSER_USE_API_KEY), local = your Chrome, none = plain HTTP "
-                         "(debugging only); auto = cloud if the key is set, else local")
+    ap.add_argument("--browser", choices=("local", "cloud", "auto", "none"), default="local",
+                    help="local = your Chrome (default, free), cloud = Browser Use Cloud (needs BROWSER_USE_API_KEY, "
+                         "billed), auto = cloud if the key is set, else local; none = plain HTTP (debugging only)")
     ap.add_argument("--session-minutes", type=int, default=15, help="cloud session length limit (default 15)")
     ap.add_argument("--schools-per-session", type=int, default=2,
                     help="start a fresh cloud browser after this many schools (default 2)")
