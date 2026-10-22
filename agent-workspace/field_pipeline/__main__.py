@@ -134,6 +134,9 @@ def main() -> None:
     ap.add_argument("--session-minutes", type=int, default=15, help="cloud session length limit (default 15)")
     ap.add_argument("--schools-per-session", type=int, default=2,
                     help="start a fresh cloud browser after this many schools (default 2)")
+    ap.add_argument("--foreground", action="store_true",
+                    help="local Chrome: briefly show the pipeline's tab on pages whose counters only load when visible, "
+                         "then switch back to your tab (the cloud browser always does this)")
     ap.add_argument("--http-fallback", action="store_true",
                     help="if the browser cannot read an HTML page, try plain HTTP (off by default)")
     ap.add_argument("--no-search", action="store_true", help="skip Bing search through the browser")
@@ -158,7 +161,7 @@ def main() -> None:
     setup_logging(out_dir, args.verbose)
     llm.api_key()  # fail fast without a key
     store = Store(args.db) if args.db else Store()
-    fetcher = Fetcher(args.browser, args.session_minutes, args.schools_per_session, args.http_fallback)
+    fetcher = Fetcher(args.browser, args.session_minutes, args.schools_per_session, args.http_fallback, args.foreground)
     try:
         run(args, src, out_dir, store, fetcher)
     finally:

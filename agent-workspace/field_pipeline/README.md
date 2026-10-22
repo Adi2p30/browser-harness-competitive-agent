@@ -36,6 +36,7 @@ Useful variations:
 | Several sheets | `--sheet "Online MS Economics" --sheet "Online MSGSCM"` |
 | Every sheet | leave out `--sheet` |
 | Your own Chrome instead of the cloud | `--browser local` (enable `chrome://inspect/#remote-debugging` first) |
+| Local Chrome: briefly show the pipeline's tab so scroll-only counters load | `--foreground` |
 | Schools per cloud session (default 2) | `--schools-per-session 3` |
 | Cloud session length limit (default 15 min) | `--session-minutes 15` |
 | Allow plain HTTP when the browser can't read a page | `--http-fallback` |
@@ -134,7 +135,9 @@ Class stats often hide in animated counters, multi-column tables and infographic
 
 - sets "by the numbers" counters to the target in their data attribute; if some still read 0 it scrolls the
   page (with a forced render, since the pipeline's tab is in the background) and reads them again; counters
-  still at 0 become `[counter not loaded]` so a real-looking 0% is never extracted;
+  still at 0 become `[counter not loaded]` so a real-looking 0% is never extracted. Some counters only run in
+  the visible tab: the cloud browser shows the pipeline's tab for them; in your own Chrome add `--foreground`
+  to do the same (a few seconds per such page, then your tab is shown again);
 - writes table cells with their column header (`Average GMAT | MSF: 640 | MSBA: 655`) when a table has 3+ columns;
 - keeps image alt text, SVG chart labels and `<dt>/<dd>` pairs as text;
 - OCRs large images on profile-like pages when `tesseract` is installed (`brew install tesseract`; optional).

@@ -347,8 +347,10 @@ def test_settle_counters_scrolls_then_marks():
         def __init__(self):
             self.calls = []
 
-        def js(self, expr):
+        def js(self, expr, target_id=None):
             self.calls.append(expr)
+            if target_id:
+                return "visible" if target_id == "U1" else "hidden"
             if expr == COUNTERS_JS:
                 return [1, 1]  # one counter set from its attribute, one still at 0
             return [100, 100] if expr.startswith("window.scrollBy") else None
@@ -357,7 +359,10 @@ def test_settle_counters_scrolls_then_marks():
             self.calls.append(method)
 
         def activate_tab(self, tab):
-            self.calls.append("activate")
+            self.calls.append(f"activate {tab}")
+
+        def list_tabs(self, include_chrome=True):
+            return [{"targetId": t} for t in ("T1", "U0", "U1")]
 
         def wait(self, s):
             pass
@@ -366,7 +371,12 @@ def test_settle_counters_scrolls_then_marks():
     f._tab = "T1"
     h = H()
     assert f._settle_counters(h, activate=True) == [1, 1]
-    assert "activate" in h.calls and "Page.captureScreenshot" in h.calls and MARK_ZERO_JS in h.calls
+    assert "activate T1" in h.calls and "Page.captureScreenshot" in h.calls and MARK_ZERO_JS in h.calls
+    assert "activate U1" not in h.calls  # cloud browser: no tab of yours to switch back to
     h = H()
     f._settle_counters(h, activate=False)
-    assert "activate" not in h.calls
+    assert not any(c.startswith("activate") for c in h.calls)
+    f.mode, h = "local", H()  # --foreground in local Chrome: show the tab, then switch back to yours
+    f._settle_counters(h, activate=True)
+    acts = [c for c in h.calls if c.startswith("activate")]
+    assert acts == ["activate T1", "activate U1"]

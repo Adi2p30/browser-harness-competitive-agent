@@ -175,7 +175,7 @@ class Fetcher:
     before `session_minutes` runs out, and again if a session dies mid-school."""
 
     def __init__(self, mode: str = "auto", session_minutes: int = 15, schools_per_session: int = 2,
-                 http_fallback: bool = False):
+                 http_fallback: bool = False, foreground: bool = False):
         if mode == "auto":
             mode = "cloud" if _env_has("BROWSER_USE_API_KEY") else "local"
         self.mode = mode
@@ -183,6 +183,7 @@ class Fetcher:
         self.session_minutes = session_minutes
         self.schools_per_session = schools_per_session
         self.http_fallback = http_fallback or mode == "none"
+        self.foreground = foreground  # local Chrome: show the pipeline's tab while unloaded counters run
         self.cloud_started = False
         self.session_started_at = 0.0
         self.session_schools = 0
@@ -300,7 +301,7 @@ class Fetcher:
                 clicked = h.js(EXPAND_JS) or 0
                 if clicked:
                     h.wait(1.5)
-                counters = self._settle_counters(h, activate=self.mode == "cloud")
+                counters = self._settle_counters(h, activate=self.mode == "cloud" or self.foreground)
                 html, final, title = h.js("[document.documentElement.outerHTML, location.href, document.title]")
                 images = h.js(IMAGES_JS) if TESSERACT and PROFILE_PAGE.search(f"{final} {title}") else []
             except Exception as exc:
@@ -325,25 +326,46 @@ class Fetcher:
         """Set counters to their data-attribute targets. If some still read 0, scroll the page so their animation
         runs (they start when scrolled into view) and read them again. The pipeline's tab is not the visible one,
         and background tabs do not render, so a tiny screenshot forces a frame after each step; in the cloud
-        browser (ours alone) the tab is also brought to the front. Counters still at 0 are marked unreadable.
+        browser (ours alone), or in local Chrome with --foreground, the tab is also brought to the front; in local
+        Chrome the tab you were looking at is shown again afterwards. Counters still at 0 are marked unreadable.
         Returns [counters set, counters left at 0]."""
         set_, zero = h.js(COUNTERS_JS) or [0, 0]
         if zero:
+            back = None
             if activate and self._tab:
+                back = self._visible_tab(h) if self.mode == "local" else None
                 h.activate_tab(self._tab)
-            for _ in range(15):
-                pos, height = h.js(SCROLL_JS) or [0, 0]
-                h.cdp("Page.captureScreenshot", format="jpeg", quality=1,
-                      clip={"x": 0, "y": 0, "width": 8, "height": 8, "scale": 1})
-                h.wait(0.3)
-                if pos >= height:
-                    break
-            h.wait(2)
+            try:
+                for _ in range(15):
+                    pos, height = h.js(SCROLL_JS) or [0, 0]
+                    h.cdp("Page.captureScreenshot", format="jpeg", quality=1,
+                          clip={"x": 0, "y": 0, "width": 8, "height": 8, "scale": 1})
+                    h.wait(0.3)
+                    if pos >= height:
+                        break
+                h.wait(2)
+            finally:
+                if back:
+                    try:
+                        h.activate_tab(back)
+                    except Exception as exc:
+                        log.debug("could not show tab %s again: %s", back, exc)
             h.js("window.scrollTo(0, 0)")
             set_, zero = h.js(COUNTERS_JS) or [0, 0]
             if zero:
                 h.js(MARK_ZERO_JS)
         return [set_, zero]
+
+    def _visible_tab(self, h) -> str | None:
+        """The tab currently shown in your Chrome (other than the pipeline's), to switch back to."""
+        for t in h.list_tabs(include_chrome=False):
+            if t["targetId"] != self._tab:
+                try:
+                    if h.js("document.visibilityState", target_id=t["targetId"]) == "visible":
+                        return t["targetId"]
+                except Exception:
+                    continue
+        return None
 
     @staticmethod
     def _ocr(images: list) -> str:
