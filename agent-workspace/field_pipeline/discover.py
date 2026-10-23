@@ -175,19 +175,31 @@ class Discoverer:
                 log.info("U.S. News %s profile for %s: %s (from fetched U.S. News pages)", kind, university, url)
                 self._usnews[key] = url
                 return url
+            if not self.use_search:
+                self._usnews[key] = None
+                return None
             online = kind.startswith("online")
-            q = f"{university} usnews {'online-education business' if online else 'best graduate business schools'}"
             want = re.compile(USNEWS_PROFILE[kind])
-            hits = self.searcher.bing(q, 10) or self.searcher.ddg(q, 10)
-            for _, href in hits:
-                m = (USNEWS_ONLINE if online else USNEWS_BSCHOOL).match(href)
-                if not (m and same_school(m.group(1), university)):
-                    continue
-                if want.search(href):
-                    url = clean_url(href)
-                elif online:  # another subject's page or the school page: its tabs link the business/MBA profile
-                    links = self.get(m.group(0)).get("links") or []
-                    url = next((clean_url(u) for _, u in links if want.search(u)), None)
+            queries = ([f"{university} usnews online-education business"] if online else
+                       [f"{university} usnews best graduate business schools",
+                        f"{university} site:usnews.com best-graduate-schools top-business-schools"])
+            for q in queries:
+                for _, href in self.searcher.bing(q, 10) or self.searcher.ddg(q, 10):
+                    if online:
+                        m = USNEWS_ONLINE.match(href)
+                        if not (m and same_school(m.group(1), university)):
+                            continue
+                        if want.search(href):
+                            url = clean_url(href)
+                        else:  # another subject's page or the school page: its tabs link the business/MBA profile
+                            links = self.get(m.group(0)).get("links") or []
+                            url = next((clean_url(u) for _, u in links if want.search(u)), None)
+                    elif (m := USNEWS_BSCHOOL.match(href) or USNEWS_GRAD.match(href)) and same_school(m.group(1), university):
+                        # any graduate-school page of the school names its slug-id; the profile redirects to its own id
+                        url = (clean_url(href) if want.search(href) else
+                               f"https://www.usnews.com/best-graduate-schools/top-business-schools/{m.group(1)}-{m.group(2)}")
+                    if url:
+                        break
                 if url:
                     break
             log.info("U.S. News %s profile for %s: %s", kind, university, url or "not found")
@@ -299,10 +311,13 @@ class Discoverer:
                     if rank < self.search_hits:
                         open_page(url, group, 50 - rank, f"search:{src}", follow=not g.sites)
 
-        if self.use_search and usnews and set(groups) & {*USNEWS_STATS_GROUPS, "rank_usnews"}:
-            if url := self.usnews_profile(university, usnews, sorted(done)):
-                for group in set(groups) & {*USNEWS_STATS_GROUPS, "rank_usnews"}:
-                    open_page(url, group, 60, "usnews-profile", follow=False)
+        # Always: the U.S. News business-school profile (every row, whatever else was found), plus the online
+        # profile for online rows. It is offered to every field group; extract.py always shows its best excerpts.
+        if usnews:
+            for kind in dict.fromkeys(["business-school", usnews if usnews.startswith("online") else "business-school"]):
+                if url := self.usnews_profile(university, kind, sorted(done)):
+                    for group in groups:
+                        open_page(url, group, 60, "usnews-profile", follow=False)
         if self.use_search and sheet:
             for group in [g for g in groups if GROUPS[g].sites]:
                 for url in self.ranking_lists(sheet, program, group):

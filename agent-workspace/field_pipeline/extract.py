@@ -8,6 +8,8 @@ from .retrieve import Chunk, top_chunks
 from .validate import check
 
 log = logging.getLogger(__name__)
+USNEWS_PAGE = re.compile("|".join(dict.fromkeys(USNEWS_PROFILE.values())))  # U.S. News profile pages
+PINNED = 3  # best excerpts of the U.S. News profile always shown to the model (first pass)
 
 PROMPT = """You fill a competitive-analysis spreadsheet for graduate business programs.
 University: {university}
@@ -78,6 +80,9 @@ def extract_group(university: str, program: str, today: str, group: str, fields:
     if skip:  # second pass: the next-best chunks, never one the first pass already showed
         seen = {c.id for c in top_chunks(chunks, query, k=skip, boost=g.boost)}
         best = [c for c in top_chunks(chunks, query, k=skip + k, boost=g.boost, max_per_url=6) if c.id not in seen][:k]
+    else:  # the U.S. News profile is always consulted, even when other pages rank higher
+        pinned = top_chunks([c for c in chunks if USNEWS_PAGE.search(c.url)], query, k=PINNED, max_per_url=PINNED)
+        best = pinned + [c for c in best if c not in pinned][:max(k - len(pinned), 0)]
     if not best:
         return {c: {"value": None, "status": "not-found", "detail": "no relevant text on fetched pages"} for c in fields}
     excerpts = "\n\n".join(f"[{c.id}] {c.url} ({c.title})\n{c.text}" for c in best)
@@ -114,6 +119,10 @@ def judge(field: Field, group: str, item: dict, best: list[Chunk], by_id: dict, 
                 applies = "target"
             elif not usnews_program_level(usnews, c.url) and applies == "target":
                 applies = "school-wide"  # business-school / online-business figures are not this program's
+        elif usnews and group in USNEWS_STATS_GROUPS and re.search(USNEWS_PROFILE["business-school"], c.url or ""):
+            note = USNEWS_LABEL["business-school"]  # online rows also read the business-school profile
+            if applies == "target":
+                applies = "school-wide"
         status, detail = check(field, value, quote, full(c), applies, f"{c.url} {c.title}")
         return status, detail, note
 

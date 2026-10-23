@@ -536,3 +536,48 @@ def test_usnews_profile_from_fetched_pages(tmp_path):
         "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-165334"
     assert d.usnews_profile("CLARK UNIVERSITY", "online-business", [rank]) == \
         "https://www.usnews.com/education/online-education/clark-university-OBUS0123/business"
+
+
+def test_usnews_profile_always_shown_to_the_model(monkeypatch):
+    from field_pipeline import extract
+    from field_pipeline.retrieve import Chunk
+    us = "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-01109"
+    chunks = [Chunk(f"C{i}", f"https://www.clarku.edu/p{i}", "Clark", "class profile average gmat gpa students " * 5)
+              for i in range(12)] + [Chunk("C99", us, "Clark University Business School", "Enrollment students 140")]
+    seen = {}
+
+    def fake_chat(prompt):
+        seen["prompt"] = prompt
+        return {}
+
+    monkeypatch.setattr(extract.llm, "chat_json", fake_chat)
+    extract.extract_group("CLARK UNIVERSITY", "MS HRM", "2026-10-23", "class", {"Class Size": f("Class Size")},
+                          chunks, k=4, usnews="business-school")
+    assert "[C99]" in seen["prompt"]  # ranked last by BM25, still shown
+
+
+def test_business_school_profile_is_school_wide_on_online_rows():
+    from field_pipeline.extract import judge
+    from field_pipeline.retrieve import Chunk
+    b = Chunk("C1", "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-01109",
+              "Clark University Business School", "Enrollment (ALL Programs)\n140")
+    item = {"value": "140", "quote": "Enrollment (ALL Programs) 140", "excerpt": "C1", "applies_to": "target"}
+    r = judge(f("Class Size"), "class", item, [b], {"C1": b}, lambda c: c.text, "online-business")
+    assert r["status"] == "school-wide" and "U.S. News business school profile" in r["detail"]
+
+
+def test_usnews_profile_built_from_any_graduate_page():
+    from field_pipeline.discover import Discoverer
+
+    class S:
+        def bing(self, q, n):
+            return []
+
+        def ddg(self, q, n):
+            return [("Clark", "https://www.usnews.com/best-graduate-schools/clark-university-165334/overall-rankings")]
+
+    d = Discoverer.__new__(Discoverer)
+    d.searcher, d._usnews, d.use_search = S(), {}, True
+    d.store = type("St", (), {"page": lambda self, u: None})()
+    assert d.usnews_profile("CLARK UNIVERSITY", "business-school") == \
+        "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-165334"

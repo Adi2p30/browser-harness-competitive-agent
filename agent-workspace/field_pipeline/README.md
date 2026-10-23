@@ -134,7 +134,10 @@ program, so for that sheet the online business profile only gives `school-wide` 
 the specialty ranks (Finance, Marketing, Business Analytics, Accounting...). Its GMAT, GPA and GRE are behind
 the paid U.S. News Compass, so they cannot be read; its free figures (e.g. specialty master's international % and
 gender, enrollment, acceptance rate) are school-level, so for non-MBA sheets they are only used as the
-`school-wide` fallback. The profile is found from links on U.S. News pages already fetched for the row (the
+`school-wide` fallback. Every row always gets the business-school profile (e.g.
+`usnews.com/best-graduate-schools/top-business-schools/clark-university-01109`), whatever else was found, plus
+its online profile on online sheets; the profile is offered to every field group and its 3 best excerpts are
+always shown to the model. The profile is found from links on U.S. News pages already fetched for the row (the
 graduate rankings page links it; online profiles via the school's online-education page), then Bing, then
 DuckDuckGo, so a Bing challenge page no longer loses it. `best-colleges` (undergraduate) pages are always rejected.
 
