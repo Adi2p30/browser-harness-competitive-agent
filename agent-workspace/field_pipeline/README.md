@@ -96,6 +96,7 @@ Statuses in `decisions.csv`:
 | `not-required` | Average GMAT / GRE: the program says the test is not required, optional or waivable (quote checked) | yes ("Not required") |
 | `computed` | Tuition total = per-credit x credit hours (site gave no total) | yes |
 | `carried-forward` | Nothing passed this year; value copied from last year's workbook | yes, grey |
+| `school-wide` | Class-profile, score or outcome field with no program-specific value: the school's / university's graduate figure (passed every check; undergraduate and MBA-only figures are never used) | yes, purple |
 | `ipeds` | Average Conferrals from federal IPEDS completions data (3-year average) | yes |
 | `ipeds-proxy` | Female (%) / International (%) nothing else filled: share of the program's IPEDS *graduates*, not the entering class | yes, blue |
 | `not-published` | Class-profile, test-score or outcome field: the program's page was read, no class-profile / outcomes page failed to load, and no page states it | blank + comment |
@@ -110,7 +111,9 @@ Statuses in `decisions.csv`:
 ### Year fallbacks
 
 Each field tries, in order: 2026-2027 (or an undated value) → 2025-2026 → 2024-2025 → last year's workbook
-(`OLD *.xlsx` next to the input, same sheet + university + program). How far back a field may go is `max_lag` in
+(`OLD *.xlsx` next to the input, same sheet + university + program). Class-profile, test-score and outcome fields
+then fall back to the school's / university's graduate figure (`school-wide`), and Female / International (%) last
+to IPEDS graduates (`ipeds-proxy`). How far back a field may go is `max_lag` in
 `fields.py`: deadlines never fall back (an old deadline is wrong), tuition, scholarships and deposits go back one
 year, everything else (class profile, outcomes, rankings, structure) two. The model returns up to 3 dated
 candidates per field and the newest one that passes wins; the second pass also retries fields that only found an
@@ -124,7 +127,8 @@ Each row is mapped to its U.S. News page by sheet: online MBA → `usnews.com/ed
 other online sheets → `.../business` (the school's online non-MBA business master's), residential sheets → the
 business-school page `usnews.com/best-graduate-schools/top-business-schools/<school>`. The online pages give
 acceptance rate, GPA, GMAT, work experience, international %, female %, average age, enrollment and rank for free;
-these count as program-level values and their cell comment names the profile. The business-school page lists
+these count as program-level values and their cell comment names the profile. Online Economics is not a business
+program, so for that sheet the online business profile only gives `school-wide` values. The business-school page lists
 the specialty ranks (Finance, Marketing, Business Analytics, Accounting...); its free class stats are MBA figures,
 so they are only used for MBA sheets. `best-colleges` (undergraduate) pages are always rejected.
 

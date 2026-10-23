@@ -107,6 +107,7 @@ td.empty { color: var(--muted); }
     <span><i class="sw" style="background:var(--entered)"></i>Typed into the workbook</span>
     <span><i class="sw" style="background:var(--prior)"></i>Earlier cycle (2025-26 or older)</span>
     <span><span class="tag ipeds">IPEDS</span> Federal degree data; "graduates" = share of graduates, not the entering class</span>
+    <span><span class="tag ipeds">school-wide</span> No program figure published; the school's / university's graduate figure</span>
     <span>Hover a value for the quote it came from &middot; ↗ opens the source</span>
   </div>
 </header>
@@ -257,7 +258,8 @@ function renderGrid() {
       const x = fact(p.id, f.name);
       const cls = p.purdue ? "purdue" : "";
       if (!x) return `<td class="${cls} empty">—</td>`;
-      const tag = x.s === "ipeds-proxy" ? `<span class="tag ipeds">IPEDS graduates</span>`
+      const tag = x.s === "school-wide" ? `<span class="tag ipeds">school-wide</span>`
+        : x.s === "ipeds-proxy" ? `<span class="tag ipeds">IPEDS graduates</span>`
         : x.s === "ipeds" ? `<span class="tag ipeds">IPEDS 3-yr avg</span>`
         : x.s === "entered" ? `<span class="tag entered">workbook</span>`
         : x.c && x.c !== CURRENT ? `<span class="tag prior">${esc(x.c.replace(/^(\d{4})-\d{2}(\d{2})$/, "$1-$2"))}</span>` : "";

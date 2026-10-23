@@ -2,7 +2,9 @@
 
 Statuses: found (passed every check, 2026-2027 or undated) | found-prior (passed, but for an earlier academic year
 the field allows: detail = that year) | not-required (Average GMAT/GRE: the program says the test is not required,
-optional or waivable) | off-cycle | other-program | bad-quote | bad-value | out-of-range | bad-source | not-found
+optional or waivable) | school-wide (passed every check, but the figure is for the whole school/university's
+graduate students: the fallback for program-specific fields; detail = earlier year, if any) | off-cycle |
+other-program | bad-quote | bad-value | out-of-range | bad-source | not-found
 """
 import re
 
@@ -56,6 +58,14 @@ def _trim(n: str) -> str:
     return n.rstrip("0").rstrip(".") if "." in n else n
 
 
+def lead_in(page_text: str, piece: str, chars: int = 300) -> str:
+    """The `chars` characters of the page just before the quote (its heading / table caption). `piece` is the
+    squashed quote (letters and digits only), so word characters are matched back to their page positions."""
+    pos = [k for k, ch in enumerate(page_text) if re.match(r"\w", ch)]
+    i = "".join(page_text[k] for k in pos).casefold().find(piece) if piece else -1
+    return page_text[max(0, pos[i] - chars):pos[i]] if i >= 0 else ""
+
+
 def to_number(value: str, kind: str) -> float | None:
     """First number in the value; money ignores commas. GRE "Verbal 155, Quant 158" -> 155 (range-checked per part)."""
     nums = NUMBER.findall(value.replace(",", ""))
@@ -79,8 +89,9 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
     group = GROUPS[field.group]
     if group.source and not (re.search(group.source, quote, re.I) or re.search(group.source, source, re.I)):
         return "bad-source", f"neither the quote nor the page is from {group.sites[0] if group.sites else group.source}"
-    if applies_to != "target" and group.program_specific:
-        return "other-program", "school-wide figure for a program-specific field"
+    school = applies_to != "target" and group.program_specific  # allowed only as the labelled school-wide fallback
+    if school and UNDERGRAD.search(lead_in(page_text, pieces[0])):
+        return "other-program", "school-wide figure under an undergraduate heading"
     if UNDERGRAD.search(quote) or UNDERGRAD.search(source):
         return "other-program", "undergraduate source"
     if field.kind in ("gmat", "gre") and NOT_REQUIRED_VALUE.search(value):
@@ -106,7 +117,7 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
                 return "out-of-range", f"{n} outside {field.lo}-{field.hi}"
     lag, label = cycle_lag(f"{quote} {value}", field.kind)
     if lag == 0:
-        return "found", ""
+        return ("school-wide", "") if school else ("found", "")
     if 0 < lag <= field.max_lag:
-        return "found-prior", label
+        return ("school-wide", label) if school else ("found-prior", label)
     return "off-cycle", f"names {label}"

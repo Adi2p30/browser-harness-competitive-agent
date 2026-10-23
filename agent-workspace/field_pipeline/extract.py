@@ -1,8 +1,9 @@
 """Stage 5: one RCAC call per (row, field group), given only the group's best chunks."""
 import logging
+import re
 
 from . import llm
-from .fields import GROUPS, USNEWS_LABEL, USNEWS_STATS_GROUPS, Field, usnews_program_level
+from .fields import GROUPS, USNEWS_LABEL, USNEWS_PROFILE, USNEWS_STATS_GROUPS, Field, usnews_program_level
 from .retrieve import Chunk, top_chunks
 from .validate import check
 
@@ -46,7 +47,7 @@ Rules:
   optional or waivable, return "Not required", "Optional" or "Waivable" with the quote that says so.
 - If nothing in the excerpts states a field, use an empty list []."""
 
-PREFERENCE = ("found", "found-prior", "not-required", "off-cycle", "other-program", "bad-source", "out-of-range", "bad-value",
+PREFERENCE = ("found", "found-prior", "not-required", "school-wide", "off-cycle", "other-program", "bad-source", "out-of-range", "bad-value",
               "bad-quote", "not-found")
 
 
@@ -107,8 +108,12 @@ def judge(field: Field, group: str, item: dict, best: list[Chunk], by_id: dict, 
 
     def run(c: Chunk) -> tuple[str, str, str]:
         applies, note = applies_to_norm(item), ""
-        if usnews and group in USNEWS_STATS_GROUPS and applies == "school-wide" and usnews_program_level(usnews, c.url):
-            applies, note = "target", USNEWS_LABEL[usnews]
+        if usnews and group in USNEWS_STATS_GROUPS and re.search(USNEWS_PROFILE[usnews], c.url or ""):
+            note = USNEWS_LABEL[usnews]
+            if applies == "school-wide" and usnews_program_level(usnews, c.url):
+                applies = "target"
+            elif usnews == "business-school" and applies != "target":  # its free class stats are MBA figures
+                applies = "other"
         status, detail = check(field, value, quote, full(c), applies, f"{c.url} {c.title}")
         return status, detail, note
 
@@ -119,9 +124,13 @@ def judge(field: Field, group: str, item: dict, best: list[Chunk], by_id: dict, 
             if s2 != "bad-quote":
                 status, detail, note, chunk = s2, d2, n2, c
                 break
-    cycle = detail if status == "found-prior" else "2026-2027" if status in ("found", "not-required") else ""
+    cycle = (detail if status == "found-prior" else "2026-2027" if status in ("found", "not-required")
+             else (detail or "2026-2027") if status == "school-wide" else "")
     if status in ("found", "found-prior"):
         detail = "; ".join(x for x in (f"{cycle} (earlier year)" if status == "found-prior" else "", note) if x)
+    elif status == "school-wide":
+        detail = "; ".join(x for x in ("school/university-wide figure: no program-specific value was found", note,
+                                       f"{cycle} (earlier year)" if cycle != "2026-2027" else "") if x)
     return {"value": value or None, "status": status, "url": chunk.url, "quote": quote or None, "detail": detail,
             "cycle": cycle}
 

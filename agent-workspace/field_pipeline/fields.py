@@ -158,7 +158,8 @@ FIELDS = [
     Field(r"ranking.*(qs|topuniversities)", "rank_qs", "text", "QS / TopUniversities rank, with edition year."),
 ]
 
-FILLED = ("found", "found-prior", "not-required", "computed", "carried-forward", "ipeds", "ipeds-proxy")  # statuses whose value goes into the workbook
+FILLED = ("found", "found-prior", "not-required", "computed", "carried-forward", "school-wide", "ipeds",
+          "ipeds-proxy")  # statuses whose value goes into the workbook
 
 # U.S. News program profiles: the page that describes the row's program category, by sheet type. Online MBA and
 # online non-MBA business master's have their own profile pages (class stats, rank); residential programs only have
@@ -166,28 +167,33 @@ FILLED = ("found", "found-prior", "not-required", "computed", "carried-forward",
 USNEWS_PROFILE = {
     "online-mba": r"usnews\.com/education/online-education/[a-z0-9-]+-[A-Z]+\d+/mba\b",
     "online-business": r"usnews\.com/education/online-education/[a-z0-9-]+-[A-Z]+\d+/business\b",
+    "online-other": r"usnews\.com/education/online-education/[a-z0-9-]+-[A-Z]+\d+/business\b",
     "mba": r"usnews\.com/best-graduate-schools/top-business-schools/[a-z0-9-]+-\d+/?$",
     "business-school": r"usnews\.com/best-graduate-schools/top-business-schools/[a-z0-9-]+-\d+/?$",
 }
 USNEWS_LABEL = {"online-mba": "U.S. News online MBA profile",
                 "online-business": "U.S. News online business master's (non-MBA) profile, covers all the school's programs",
+                "online-other": "U.S. News online business master's profile: the school's business programs, not "
+                                "this (non-business) program",
                 "mba": "U.S. News business school profile (MBA figures)",
                 "business-school": "U.S. News business school profile"}
 USNEWS_STATS_GROUPS = ("scores", "class", "outcomes")
 
 
 def usnews_kind(sheet: str, program: str) -> str:
+    """Which U.S. News profile describes the row. Online Economics is not a business program: the online business
+    profile is only school-wide data for it ("online-other")."""
     s = f"{sheet} {program}".casefold()
     mba = bool(re.search(r"\bmba\b", s))
     if "online" in s:
-        return "online-mba" if mba else "online-business"
+        return "online-mba" if mba else "online-other" if re.search(r"econom", sheet, re.I) else "online-business"
     return "mba" if mba else "business-school"
 
 
 def usnews_program_level(kind: str, url: str) -> bool:
     """True if U.S. News figures on `url` describe the row's program (category), so they count for class stats.
     The business-school page's stats are MBA figures: program-level only for MBA rows."""
-    return kind != "business-school" and bool(re.search(USNEWS_PROFILE[kind], url or ""))
+    return kind not in ("business-school", "online-other") and bool(re.search(USNEWS_PROFILE[kind], url or ""))
 
 
 # Columns the pipeline never extracts: inputs, our own bookkeeping, or numbers computed from other columns.

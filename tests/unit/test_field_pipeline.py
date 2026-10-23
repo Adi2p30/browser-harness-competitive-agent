@@ -119,7 +119,9 @@ def test_chunks_and_retrieval():
 def test_program_relevance():
     page = "Undergraduate admission statistics 52% Female 13.4% Acceptance Rate. Our MS class: 45% women."
     female, rate = f("Female (%)"), f("Accept Rate (%)")
-    assert check(female, "52%", "52% Female", page, "school-wide")[0] == "other-program"
+    assert check(female, "52%", "52% Female", page, "school-wide")[0] == "other-program"  # undergraduate heading
+    grad = "Graduate students at the university: 41% women."
+    assert check(female, "41%", "41% women", grad, "school-wide") == ("school-wide", "")  # the fallback
     assert check(rate, "13.4%", "13.4% Acceptance Rate", page, "target",
                  "https://www.bc.edu/admission/undergraduate/statistics.html Undergraduate Admission")[0] == "other-program"
     assert check(female, "45%", "Our MS class: 45% women", page, "target")[0] == "found"
@@ -241,7 +243,9 @@ def test_best_candidate():
 
 def test_usnews_profile():
     online = "https://www.usnews.com/education/online-education/liberty-university-OBUS0955/business"
-    assert usnews_kind("Online MS Economics", "") == "online-business"
+    assert usnews_kind("Online MS Economics", "") == "online-other"
+    assert usnews_kind("Online MS Business Analytics", "") == "online-business"
+    assert not usnews_program_level("online-other", online)
     assert usnews_kind("Online MBA", "") == "online-mba"
     assert usnews_kind("1yr MBA", "") == "mba" and usnews_kind("MS Finance - Residential", "") == "business-school"
     assert usnews_program_level("online-business", online)
@@ -269,7 +273,13 @@ def test_usnews_profile_counts_as_program_level():
     item = {"value": "0%", "quote": "International students 0%", "excerpt": "C1", "applies_to": "school-wide"}
     intl = f("International (%)")
     assert judge(intl, "class", item, [c], {"C1": c}, full, "online-business")["status"] == "found"
-    assert judge(intl, "class", item, [c], {"C1": c}, full, "")["status"] == "other-program"
+    other = judge(intl, "class", item, [c], {"C1": c}, full, "online-other")  # online Economics
+    assert other["status"] == "school-wide" and "not this (non-business) program" in other["detail"]
+    assert judge(intl, "class", item, [c], {"C1": c}, full, "")["status"] == "school-wide"
+    b = Chunk("C2", "https://www.usnews.com/best-graduate-schools/top-business-schools/boston-college-01107",
+              "Boston College", "International students\n31%")
+    mba = {"value": "31%", "quote": "International students 31%", "excerpt": "C2", "applies_to": "school-wide"}
+    assert judge(intl, "class", mba, [b], {"C2": b}, full, "business-school")["status"] == "other-program"
 
 
 def test_prior_record_match():

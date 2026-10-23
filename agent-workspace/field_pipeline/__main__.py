@@ -43,10 +43,12 @@ log = logging.getLogger("field_pipeline")
 COMPUTED_TOTALS = (("In-State Tuition Total", "In-State Tuition Per Credit"),
                    ("Out-of-State Tuition Total", "Out-of-State Tuition Per Credit"),
                    ("International Tuition Total", "International Tuition Per Credit"))
-RETRY = ("not-found", "bad-quote", "bad-value", "other-program", "off-cycle", "found-prior")  # second-pass statuses
+RETRY = ("not-found", "bad-quote", "bad-value", "other-program", "off-cycle", "found-prior",
+         "school-wide")  # second-pass statuses: the next-best chunks may hold a program-specific value
 # Cell colours for values that are not 2026-2027 facts: one year back, two years back, last year's workbook,
 # IPEDS graduates standing in for the entering class.
-FILL = {"2025-2026": "FFF2CC", "2024-2025": "FCE4D6", "carried-forward": "E7E6E6", "ipeds-proxy": "DDEBF7"}
+FILL = {"2025-2026": "FFF2CC", "2024-2025": "FCE4D6", "carried-forward": "E7E6E6", "ipeds-proxy": "DDEBF7",
+        "school-wide": "E4DFEC"}
 CONFERRALS = re.compile(r"conferral", re.I)
 PUBLISHED_GROUPS = ("scores", "class", "outcomes")  # fields a program may simply not publish
 PROFILE_URL = re.compile(r"profile|by-the-numbers|facts|statistic|outcome|employment|class-of|cohort", re.I)
@@ -368,10 +370,12 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
         # last resort: last year's researched value for cells still blank (never for fields without a fallback year)
         for c, f in wanted.items():
             r = results.get(c, {"status": missing})
-            if (old and r["status"] not in FILLED and f.max_lag >= 1
+            # last year's program value beats this year's school-wide fallback
+            if (old and (r["status"] not in FILLED or r["status"] == "school-wide") and f.max_lag >= 1
                     and not re.fullmatch(r"[-\u2013\u2014?.\s]*", str(old.get(c) or ""))):  # blank or a "-" placeholder
+                this_year = r["status"] + (f" {r['value']}" if r["status"] == "school-wide" else "")
                 results[c] = {"value": old[c], "status": "carried-forward", "url": None, "quote": None,
-                              "detail": f"value from {prior_path.name} row {old['_row']} (this year: {r['status']})",
+                              "detail": f"value from {prior_path.name} row {old['_row']} (this year: {this_year})",
                               "cycle": "2025-2026 workbook"}
 
         if ip:

@@ -176,7 +176,7 @@ def build(workbook: str, prior_path: str | None, decision_files: list[Path]) -> 
                 if d := found.get((sheet, row.row, name)):
                     values[name] = {"v": text(d["value"]), "c": d["cycle"] or "2026-2027", "s": d["status"],
                                     "u": d["source_url"], "q": d["quote"]}
-                    if d["status"].startswith("ipeds"):
+                    if d["status"].startswith("ipeds") or d["status"] == "school-wide":
                         values[name]["d"] = d["detail"]
                 elif text(typed.get(name) or ""):
                     values[name] = {"v": text(typed[name]), "c": "2026-2027", "s": "entered", "u": link, "q": ""}
