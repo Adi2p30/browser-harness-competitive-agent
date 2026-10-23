@@ -96,7 +96,7 @@ Statuses in `decisions.csv`:
 | `found` | Passed every check, 2026-2027 or undated | yes |
 | `found-prior` | Passed every check, but for an earlier year (`cycle` column) | yes, yellow (2025-26) / orange (2024-25) |
 | `not-required` | Average GMAT / GRE: the program says the test is not required, optional or waivable (quote checked) | yes ("Not required") |
-| `computed` | Tuition total = per-credit x credit hours (site gave no total) | yes |
+| `computed` | Tuition total = per-credit x credit hours (site gave no total; only when the credits quote says credits/hours) | yes |
 | `carried-forward` | Nothing passed this year; value copied from last year's workbook | yes, grey |
 | `school-wide` | Class-profile, score or outcome field with no program-specific value: the school's / university's graduate figure (passed every check; undergraduate and MBA-only figures are never used) | yes, purple |
 | `ipeds` | Average Conferrals from federal IPEDS completions data (3-year average) | yes |
@@ -107,7 +107,7 @@ Statuses in `decisions.csv`:
 | `other-program` | Value is for another program, undergrad, or school-wide where it must be program-specific | blank + comment |
 | `bad-quote` | Model's quote is not on the page (paraphrase or invention) | blank + comment |
 | `bad-source` | Ranking value not from (or naming) its publisher | blank + comment |
-| `bad-value` / `out-of-range` | Value doesn't match its quote, or is implausible (e.g. GPA 35) | blank + comment |
+| `bad-value` / `out-of-range` | Value doesn't match its quote, or is implausible (e.g. GPA 35); also a Yes/No the quote doesn't support (a "No" needs a negation, "only", "fully online", or for 3-year Indian degrees a four-year requirement; a "Yes" fails on "not offered / not STEM") and credit hours the page states in units or courses | blank + comment |
 | `no-start-link` | Row has no Website Link | blank |
 
 ### Year fallbacks

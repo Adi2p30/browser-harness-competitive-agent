@@ -105,7 +105,8 @@ FIELDS = [
     Field(r"^(female|women)\s*(\(%\)|%)", "class", "percent", "Percent of the class who are women.", 0, 100),
     Field(r"accept rate", "class", "percent", "Admission/acceptance rate (admitted / applied).", 0, 100),
     Field(r"duration", "structure", "months", "Typical time to complete the program, in MONTHS.", 1, 120),
-    Field(r"credit hours", "structure", "number", "Total credit hours required to graduate.", 1, 120),
+    Field(r"credit hours", "structure", "number", "Total credit hours required to graduate. Only if the page states "
+          "credits/credit hours; if it counts units or courses instead, return nothing.", 1, 120),
     Field(r"on-campus options", "campus", "yesno", "Yes if online students can or must do any part on campus (classes, residencies, "
           "immersions, orientation); No only if the page says it is fully online with no campus option. Add a few words."),
     Field(r"delivery model.*(faculty|adjunct)", "structure", "text", "Who teaches: Full-time faculty / Part-time "

@@ -581,3 +581,21 @@ def test_usnews_profile_built_from_any_graduate_page():
     d.store = type("St", (), {"page": lambda self, u: None})()
     assert d.usnews_profile("CLARK UNIVERSITY", "business-school") == \
         "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-165334"
+
+
+def test_credit_hours_not_units_and_yes_no_needs_support():
+    credits = f("Credit Hours")
+    q = "The MSM requires 10 units of coursework."
+    assert check(credits, "10", q, q) == ("bad-value", "the page counts units/courses, not credit hours")
+    q = "The program requires 30 credit hours."
+    assert check(credits, "30", q, q)[0] == "found"
+    stem, campus, india = f("STEM Designation"), f("On-Campus Options"), f("Accept 3yr-degree from India? (Y/N)")
+    q = "MBA Finance and Information Management and Business Analytics concentrations are STEM designated"
+    assert check(stem, "No", q, q) == ("bad-value", "quote does not say No")
+    q = "The MS in Management is not STEM designated."
+    assert check(stem, "No", q, q)[0] == "found"
+    assert check(stem, "Yes", q, q) == ("bad-value", "quote says it is not offered / not the case")
+    q = "This program is 100% online."
+    assert check(campus, "No – fully online", q, q)[0] == "found"
+    q = "All programs require the equivalent of a four-year U.S. bachelor's degree."
+    assert check(india, "No", q, q)[0] == "found"

@@ -17,6 +17,18 @@ CLASS_OF = re.compile(r"\bclass\s+of\s+(20\d\d)\b", re.I)
 YEAR = re.compile(r"(?<![\d$,.])(?<!\d-)(20\d\d)(?![\d,])")  # a bare year, not part of a number like $2,025 or 12025
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
 NUMERIC = {"number", "percent", "money", "months", "gmat", "gre", "gpa"}
+CREDITS = re.compile(r"credit|\bhours?\b|\bsch\b", re.I)
+UNITS = re.compile(r"\bunits?\b|\bcourses\b|\bmodules?\b", re.I)
+YES_NO = re.compile(r"^\s*(yes|no|y|n)\b", re.I)
+# a "No" must be stated: a negation, "only ..." or a fully-online statement (On-Campus Options: No)
+NO_EVIDENCE = re.compile(r"\bnot?\b|n't\b|\bnone\b|\bwithout\b|\bnever\b|\bno longer\b|\bunavailable\b|"
+                         r"\bonly\b|\bexclusively\b|(100%|fully|entirely|completely) online", re.I)
+# a "Yes" is contradicted by "not offered / not STEM / does not accept ..."
+# 3-year Indian degrees: a four-year requirement or an extra condition ("expected to complete ...") also says No
+NO_EVIDENCE_3YR = re.compile(r"four-year|4-year|four year|\brequire|\bmust\b|expected to|equivalen", re.I)
+YES_DENIED = re.compile(r"\b(not|no longer|isn't|aren't|doesn't|don't|does not|do not|is not|are not|cannot)\s+"
+                        r"(\w+\s+){0,3}(offer|offered|available|provide|provided|stem|designated|accept|accepted|"
+                        r"eligible|required|include|included)\b", re.I)
 NOT_REQUIRED_VALUE = re.compile(r"not required|optional|waiv|no (gmat|gre)", re.I)
 NOT_REQUIRED_QUOTE = re.compile(r"not (be )?required|optional|waive|waiver|do(es)? not require|no (gmat|gre)\b|not needed",
                                 re.I)
@@ -94,6 +106,14 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
         return "other-program", "school-wide figure under an undergraduate heading"
     if UNDERGRAD.search(quote) or UNDERGRAD.search(source):
         return "other-program", "undergraduate source"
+    if field.pattern == r"credit hours" and UNITS.search(quote) and not CREDITS.search(quote):
+        return "bad-value", "the page counts units/courses, not credit hours"
+    if field.kind == "yesno" and (m := YES_NO.match(value)):
+        evidence = NO_EVIDENCE.search(quote) or (re.search(r"3yr|india", field.pattern) and NO_EVIDENCE_3YR.search(quote))
+        if m.group(1).casefold().startswith("n") and not evidence:
+            return "bad-value", "quote does not say No"
+        if m.group(1).casefold().startswith("y") and YES_DENIED.search(quote):
+            return "bad-value", "quote says it is not offered / not the case"
     if field.kind in ("gmat", "gre") and NOT_REQUIRED_VALUE.search(value):
         if not NOT_REQUIRED_QUOTE.search(quote):
             return "bad-value", "quote does not say the test is not required"

@@ -364,7 +364,8 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             newer = stated.get("status") != "found-prior" or (r_per.get("cycle") or "") > (stated.get("cycle") or "")
             if (total in wanted and stated.get("status") != "found" and newer
                     and r_per.get("status") in ("found", "found-prior") and credits.get("status") in ("found", "found-prior")
-                    and money(r_per["value"]) and money(credits["value"])):
+                    and money(r_per["value"]) and money(credits["value"])
+                    and re.search(r"credit|hour", credits.get("quote") or "", re.I)):  # never units x per-credit
                 value = round(money(r_per["value"]) * money(credits["value"]))
                 results[total] = {"value": f"${value:,}", "status": "computed", "url": r_per.get("url"),
                                   "quote": None, "detail": f"{r_per['value']} x {credits['value']} credit hours",
