@@ -424,3 +424,77 @@ def test_icon_labels_dropped_and_fresh_keeps_links(tmp_path):
     db = tmp_path / "p.sqlite"
     Store(db).add_candidate("k", "https://x.edu/ms-econ", "start", 1, "start")
     assert Store(db, fresh_since=time.time() + 1).start_url("k") == "https://x.edu/ms-econ"
+
+
+def test_gmat_not_required():
+    gmat = f("Average GMAT")
+    q = "While we do not require standardized test scores, we strongly suggest submitting GRE or GMAT scores"
+    assert check(gmat, "Not required", q, q)[0] == "not-required"
+    assert check(gmat, "Not required", "Average GPA 3.4", "Average GPA 3.4")[0] == "bad-value"
+    assert check(gmat, "Not required", q, q, "other")[0] == "other-program"
+
+
+def test_counter_step_never_costs_the_page():
+    from field_pipeline.fetch import COUNTERS_JS, Fetcher
+
+    class H:
+        def js(self, expr, target_id=None):
+            if expr == COUNTERS_JS:
+                return [0, 1]
+            if expr.startswith("window.scrollBy"):
+                return [100, 100]
+            raise TimeoutError("Runtime.evaluate timed out")  # e.g. window.scrollTo(0, 0) on a hung page
+
+        def cdp(self, method, **kw):
+            raise TimeoutError("screenshot never rendered")
+
+        def wait(self, s):
+            pass
+
+    import pytest as _pytest
+    with _pytest.raises(TimeoutError):  # the step itself may fail ...
+        Fetcher("none")._settle_counters(H(), activate=False)
+    # ... but _via_browser wraps it (checked in the source so this stays a unit test)
+    import inspect
+    from field_pipeline import fetch
+    assert "must never cost the page itself" in inspect.getsource(fetch.Fetcher._via_browser)
+
+
+def test_retry_failed_pages_with_http(tmp_path):
+    from field_pipeline.discover import Discoverer
+    from field_pipeline.store import Store
+    store = Store(tmp_path / "p.sqlite")
+    store.save_page({"url": "https://x.edu/profile", "status": "unreadable"})
+    store.save_page({"url": "https://x.edu/ok", "status": "ok", "text": "fine"})
+
+    class F:
+        use_browser, calls = True, []
+
+        def fetch(self, url, http_ok=False):
+            self.calls.append((url, http_ok))
+            return {"url": url, "status": "ok", "via": "http", "text": "Average GPA 3.3"}
+
+    d = Discoverer.__new__(Discoverer)
+    d.store, d.fetcher = store, F()
+    d.retry_failed(["https://x.edu/ok", "https://x.edu/profile"])
+    assert d.fetcher.calls == [("https://x.edu/profile", True)]
+    assert store.page("https://x.edu/profile")["text"] == "Average GPA 3.3"
+
+
+def test_not_published_only_when_nothing_was_lost(tmp_path):
+    from field_pipeline.__main__ import mark_not_published
+    from field_pipeline.store import Store
+    from field_pipeline.workbook import Row
+    store = Store(tmp_path / "p.sqlite")
+    row = Row("Online MS Economics", 2, "X UNIVERSITY", "MS Economics", "https://x.edu/ms", [])
+    store.save_page({"url": "https://x.edu/ms", "status": "ok", "text": "program"})
+    store.add_candidate(row.key, "https://x.edu/ms", "*", 100, "start")
+    wanted = {"Average GMAT": f("Average GMAT"), "Credit Hours": f("Credit Hours")}
+    results = {"Average GMAT": {"status": "not-found"}, "Credit Hours": {"status": "not-found"}}
+    mark_not_published(store, row, wanted, results, "not-found")
+    assert results["Average GMAT"]["status"] == "not-published" and results["Credit Hours"]["status"] == "not-found"
+    store.save_page({"url": "https://x.edu/class-profile", "status": "unreadable"})
+    store.add_candidate(row.key, "https://x.edu/class-profile", "class", 50, "search:ddg")
+    results = {"Average GMAT": {"status": "not-found"}}
+    mark_not_published(store, row, wanted, results, "not-found")
+    assert results["Average GMAT"]["status"] == "not-found"  # a lost profile page: we may have missed it

@@ -32,7 +32,7 @@ from pathlib import Path
 from . import llm
 from .discover import Discoverer, foreign_program, program_words
 from .extract import better, extract_group
-from .fetch import BrowserUnavailable, Fetcher
+from .fetch import BrowserUnavailable, Fetcher, clean_url
 from .fields import FILLED, plan, usnews_kind
 from .ipeds import Ipeds, page_cip
 from .retrieve import chunk_pages
@@ -48,11 +48,33 @@ RETRY = ("not-found", "bad-quote", "bad-value", "other-program", "off-cycle", "f
 # IPEDS graduates standing in for the entering class.
 FILL = {"2025-2026": "FFF2CC", "2024-2025": "FCE4D6", "carried-forward": "E7E6E6", "ipeds-proxy": "DDEBF7"}
 CONFERRALS = re.compile(r"conferral", re.I)
+PUBLISHED_GROUPS = ("scores", "class", "outcomes")  # fields a program may simply not publish
+PROFILE_URL = re.compile(r"profile|by-the-numbers|facts|statistic|outcome|employment|class-of|cohort", re.I)
 FEMALE, INTERNATIONAL = re.compile(r"^(female|women)\s*(\(%\)|%)", re.I), re.compile(r"^international\s*(\(%\)|%)", re.I)
 
 
 def fill_for(r: dict) -> str | None:
     return FILL.get(r["status"]) or FILL.get(r.get("cycle") or "")
+
+
+def mark_not_published(store: Store, row, wanted: dict, results: dict, missing: str) -> None:
+    """Class-profile, test-score and outcome fields still not found become not-published when the program's own
+    page was read and no class-profile / outcomes page was lost to a failed fetch: the site was read and does not
+    state them. Otherwise they stay not-found (we may have missed them)."""
+    todo = [c for c, f in wanted.items()
+            if f.group in PUBLISHED_GROUPS and results.get(c, {"status": missing})["status"] == "not-found"]
+    if not todo or not row.start_url:
+        return
+    start = store.page(clean_url(row.start_url))
+    lost = [u for u in store.row_failed(row.key) if PROFILE_URL.search(u)]
+    if lost:
+        log.info("not marking 'not-published': profile/outcome page(s) could not be read: %s", lost[:3])
+    if start is None or start["status"] != "ok" or lost:
+        return
+    for c in todo:
+        results[c] = {**results.get(c, {}), "status": "not-published",
+                      "detail": "the program's pages were read and none states it (no class-profile or outcomes "
+                                "page was lost to a failed fetch)"}
 
 
 def apply_ipeds(ip: Ipeds, store: Store, row, wanted: dict, results: dict, conferral_cols: list[str]) -> None:
@@ -354,6 +376,7 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
 
         if ip:
             apply_ipeds(ip, store, row, wanted, results, conferral_cols)
+        mark_not_published(store, row, wanted, results, missing)
 
         for c in [*wanted, *conferral_cols]:
             r = results.get(c, {"status": missing})

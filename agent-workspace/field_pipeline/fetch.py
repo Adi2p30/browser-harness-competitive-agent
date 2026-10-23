@@ -46,10 +46,12 @@ EXPAND_JS = r"""
 
 
 # A counter element still showing 0: counter-like class, no children, text "0" (with a short prefix/suffix), not a
-# "0/4"-style tally, and not in site chrome (nav, header, buttons: "0 Shortlisted" or QS's "0/4 compare" really is 0).
+# "0/4"-style tally, not a cart/compare/badge widget, and not in site chrome (nav, header, buttons): "0 Shortlisted",
+# QS's "0/4 compare" and DePaul's compare-programs cart really are 0.
 STUCK = r"""
 const stuck = el => !el.children.length && /^\D{0,3}0(\.0+)?\D{0,3}$/.test(el.textContent.trim())
   && !/^\s*(\/|of\b)/i.test(el.nextSibling ? el.nextSibling.textContent || '' : '')
+  && !/cart|compare|shortlist|badge|notif|basket|wish/i.test(el.getAttribute('class') || '')
   && !el.closest('nav, header, footer, aside, button, a, form, [role="navigation"], [role="button"], [role="dialog"]');
 const counters = () => document.querySelectorAll('[class*="count" i], [class*="odometer" i]');
 """
@@ -309,7 +311,11 @@ class Fetcher:
                 clicked = h.js(EXPAND_JS) or 0
                 if clicked:
                     h.wait(1.5)
-                counters = self._settle_counters(h, activate=self.mode == "cloud" or self.foreground)
+                try:  # helps read counters; must never cost the page itself
+                    counters = self._settle_counters(h, activate=self.mode == "cloud" or self.foreground)
+                except Exception as exc:
+                    counters = f"failed ({str(exc)[:80]})"
+                    log.debug("counter step failed on %s: %s", url, exc)
                 html, final, title = h.js("[document.documentElement.outerHTML, location.href, document.title]")
                 images = h.js(IMAGES_JS) if TESSERACT and PROFILE_PAGE.search(f"{final} {title}") else []
             except Exception as exc:
@@ -346,8 +352,11 @@ class Fetcher:
             try:
                 for _ in range(15):
                     pos, height = h.js(SCROLL_JS) or [0, 0]
-                    h.cdp("Page.captureScreenshot", format="jpeg", quality=1,
-                          clip={"x": 0, "y": 0, "width": 8, "height": 8, "scale": 1})
+                    try:  # a background tab may never render: give up on forcing frames, keep scrolling
+                        h.cdp("Page.captureScreenshot", _response_timeout=3, format="jpeg", quality=1,
+                              clip={"x": 0, "y": 0, "width": 8, "height": 8, "scale": 1})
+                    except Exception:
+                        pass
                     h.wait(0.3)
                     if pos >= height:
                         break
@@ -415,14 +424,15 @@ class Fetcher:
         title, text, links = html_to_page(resp.text, resp.url)
         return {"final_url": resp.url, "kind": "html", "title": title, "text": text, "links": links, "via": "http"}
 
-    def fetch(self, url: str) -> dict:
+    def fetch(self, url: str, http_ok: bool = False) -> dict:
+        """http_ok: try plain HTTP when the browser cannot read the page (used for the end-of-row retry)."""
         if urlparse(url).path.lower().endswith(".pdf"):
             got = self._via_http(url, html_ok=False)
         else:
             got = self._via_browser(url)
             if got is not None and got["final_url"].lower().endswith(".pdf"):  # browser landed on a PDF viewer
                 got = self._via_http(got["final_url"], html_ok=False)
-            elif (got is None or len(got["text"]) < MIN_TEXT) and self.http_fallback:
+            elif (got is None or len(got["text"]) < MIN_TEXT) and (self.http_fallback or http_ok):
                 got = self._via_http(url, html_ok=True) or got
         if got is None:
             return {"url": url, "status": "unreadable"}

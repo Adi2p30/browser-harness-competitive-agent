@@ -68,6 +68,11 @@ class Store:
         pages = [self.page(u) for u in urls]
         return [p for p in pages if p and p["status"] == "ok"]
 
+    def row_failed(self, row_key: str) -> list[str]:
+        """Pages opened for a row that could not be read."""
+        urls = [u for (u,) in self.db.execute("SELECT DISTINCT url FROM candidates WHERE row_key=?", (row_key,))]
+        return [u for u in urls if (p := self.page(u)) is not None and p["status"] != "ok"]
+
     # results
     def save_result(self, row_key: str, field: str, grp: str, r: dict) -> None:
         with self.lock:

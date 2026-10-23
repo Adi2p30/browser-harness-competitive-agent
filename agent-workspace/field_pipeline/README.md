@@ -93,11 +93,13 @@ Statuses in `decisions.csv`:
 |---|---|---|
 | `found` | Passed every check, 2026-2027 or undated | yes |
 | `found-prior` | Passed every check, but for an earlier year (`cycle` column) | yes, yellow (2025-26) / orange (2024-25) |
+| `not-required` | Average GMAT / GRE: the program says the test is not required, optional or waivable (quote checked) | yes ("Not required") |
 | `computed` | Tuition total = per-credit x credit hours (site gave no total) | yes |
 | `carried-forward` | Nothing passed this year; value copied from last year's workbook | yes, grey |
 | `ipeds` | Average Conferrals from federal IPEDS completions data (3-year average) | yes |
 | `ipeds-proxy` | Female (%) / International (%) nothing else filled: share of the program's IPEDS *graduates*, not the entering class | yes, blue |
-| `not-found` | No fetched page states it | blank + comment |
+| `not-published` | Class-profile, test-score or outcome field: the program's page was read, no class-profile / outcomes page failed to load, and no page states it | blank + comment |
+| `not-found` | No fetched page states it, and a relevant page may have been missed (start page or a profile page could not be read, or a non-profile field) | blank + comment |
 | `off-cycle` | Value is for a year older than the field allows, or a later year | blank + comment |
 | `other-program` | Value is for another program, undergrad, or school-wide where it must be program-specific | blank + comment |
 | `bad-quote` | Model's quote is not on the page (paraphrase or invention) | blank + comment |
@@ -150,13 +152,17 @@ Class stats often hide in animated counters, multi-column tables and infographic
 - sets "by the numbers" counters to the target in their data attribute; if some still read 0 it scrolls the
   page (with a forced render, since the pipeline's tab is in the background) and reads them again; counters
   still at 0 become `[counter not loaded]` so a real-looking 0% is never extracted. Tallies ("0/4") and counters
-  in navigation, headers, buttons and forms ("0 Shortlisted") are left alone. Some counters only run in
+  in navigation, headers, buttons, forms and cart/compare widgets ("0 Shortlisted") are left alone. If this step
+  fails on a page, the page is still read. Some counters only run in
   the visible tab: the cloud browser shows the pipeline's tab for them; in your own Chrome add `--foreground`
   to do the same (a few seconds per such page, then your tab is shown again);
 - writes table cells with their column header (`Average GMAT | MSF: 640 | MSBA: 655`) when a table has 3+ columns;
 - keeps image alt text and SVG chart labels that contain a number (not icon names such as "down arrow"), and
   `<dt>/<dd>` pairs, as text;
 - OCRs large images on profile-like pages when `tesseract` is installed (`brew install tesseract`; optional).
+
+Pages that could not be read (usually a momentary browser timeout) are retried once at the end of each school,
+with plain HTTP if the browser still fails.
 
 Pages and results are cached in `agent-workspace/field_pipeline/data/pipeline.sqlite`, so a rerun only does new
 work. To start completely fresh, delete that file.

@@ -284,4 +284,15 @@ class Discoverer:
                 for s, u in ranked[:k]:
                     if s > 0:
                         open_page(u, group, s, "crawl")
+        self.retry_failed(sorted(done))
         return self.store.row_pages(row_key)
+
+    def retry_failed(self, urls: list[str], limit: int = 12) -> None:
+        """Pages that could not be read (browser timeouts are often momentary): one more browser try at the end of
+        the row, then plain HTTP. A page found by search but lost to a timeout cost whole class profiles before."""
+        failed = [u for u in urls if (p := self.store.page(u)) is not None and p["status"] == "unreadable"][:limit]
+        for url in failed:
+            page = self.fetcher.fetch(url, http_ok=True)
+            self.store.save_page(page)
+            log.info("retried [%s/%s] %s (%d chars)", page.get("via", "-"), page["status"], url,
+                     len(page.get("text") or ""))

@@ -158,7 +158,7 @@ FIELDS = [
     Field(r"ranking.*(qs|topuniversities)", "rank_qs", "text", "QS / TopUniversities rank, with edition year."),
 ]
 
-FILLED = ("found", "found-prior", "computed", "carried-forward", "ipeds", "ipeds-proxy")  # statuses whose value goes into the workbook
+FILLED = ("found", "found-prior", "not-required", "computed", "carried-forward", "ipeds", "ipeds-proxy")  # statuses whose value goes into the workbook
 
 # U.S. News program profiles: the page that describes the row's program category, by sheet type. Online MBA and
 # online non-MBA business master's have their own profile pages (class stats, rank); residential programs only have

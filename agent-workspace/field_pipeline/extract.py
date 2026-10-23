@@ -42,9 +42,11 @@ Rules:
   unless the column asks for it.
 - Never add a year, term or label to a value that its quote or its page does not state.
 - Yes/No fields: "Yes" or "No" plus a few words of evidence; "No" only if the page says it is not offered.
+- Average GMAT / Average GRE: if no average is given but the target program says the test is not required,
+  optional or waivable, return "Not required", "Optional" or "Waivable" with the quote that says so.
 - If nothing in the excerpts states a field, use an empty list []."""
 
-PREFERENCE = ("found", "found-prior", "off-cycle", "other-program", "bad-source", "out-of-range", "bad-value",
+PREFERENCE = ("found", "found-prior", "not-required", "off-cycle", "other-program", "bad-source", "out-of-range", "bad-value",
               "bad-quote", "not-found")
 
 
@@ -117,7 +119,7 @@ def judge(field: Field, group: str, item: dict, best: list[Chunk], by_id: dict, 
             if s2 != "bad-quote":
                 status, detail, note, chunk = s2, d2, n2, c
                 break
-    cycle = detail if status == "found-prior" else "2026-2027" if status == "found" else ""
+    cycle = detail if status == "found-prior" else "2026-2027" if status in ("found", "not-required") else ""
     if status in ("found", "found-prior"):
         detail = "; ".join(x for x in (f"{cycle} (earlier year)" if status == "found-prior" else "", note) if x)
     return {"value": value or None, "status": status, "url": chunk.url, "quote": quote or None, "detail": detail,

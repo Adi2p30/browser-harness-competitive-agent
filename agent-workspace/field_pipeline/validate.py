@@ -1,8 +1,8 @@
 """Stage 6: code checks on every extracted value. Nothing reaches the workbook without passing all of them.
 
 Statuses: found (passed every check, 2026-2027 or undated) | found-prior (passed, but for an earlier academic year
-the field allows: detail = that year) | off-cycle | other-program | bad-quote | bad-value | out-of-range |
-bad-source | not-found
+the field allows: detail = that year) | not-required (Average GMAT/GRE: the program says the test is not required,
+optional or waivable) | off-cycle | other-program | bad-quote | bad-value | out-of-range | bad-source | not-found
 """
 import re
 
@@ -15,6 +15,9 @@ CLASS_OF = re.compile(r"\bclass\s+of\s+(20\d\d)\b", re.I)
 YEAR = re.compile(r"(?<![\d$,.])(?<!\d-)(20\d\d)(?![\d,])")  # a bare year, not part of a number like $2,025 or 12025
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
 NUMERIC = {"number", "percent", "money", "months", "gmat", "gre", "gpa"}
+NOT_REQUIRED_VALUE = re.compile(r"not required|optional|waiv|no (gmat|gre)", re.I)
+NOT_REQUIRED_QUOTE = re.compile(r"not (be )?required|optional|waive|waiver|do(es)? not require|no (gmat|gre)\b|not needed",
+                                re.I)
 UNDERGRAD = re.compile(r"\b(undergraduate|freshm[ae]n|first-year|first year class|high school|sat|act scores?)\b|best-colleges", re.I)
 
 
@@ -80,6 +83,10 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
         return "other-program", "school-wide figure for a program-specific field"
     if UNDERGRAD.search(quote) or UNDERGRAD.search(source):
         return "other-program", "undergraduate source"
+    if field.kind in ("gmat", "gre") and NOT_REQUIRED_VALUE.search(value):
+        if not NOT_REQUIRED_QUOTE.search(quote):
+            return "bad-value", "quote does not say the test is not required"
+        return "not-required", ""
     # A year the quote lacks is fine if the page states it (e.g. a "Fall 2026 deadlines" heading above the table).
     if added := set(YEAR.findall(value)) - set(YEAR.findall(quote)) - set(YEAR.findall(page_text)):
         return "bad-value", f"value adds year {sorted(added)[0]} that the page does not state"
