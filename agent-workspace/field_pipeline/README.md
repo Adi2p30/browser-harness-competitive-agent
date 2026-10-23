@@ -53,6 +53,8 @@ Useful variations:
 | Skip IPEDS (conferrals, graduate-share proxies) | `--no-ipeds` |
 | More detail in the terminal | `-v` |
 
+Each school's log line shows the time elapsed so far and an estimate of the time left; the run ends with the total.
+
 Every web page is opened in a real browser through browser-harness (plain HTTP is only used for PDFs and
 sitemap files). By default that is your own Chrome (`--browser local`, free; enable
 `chrome://inspect/#remote-debugging` first). The Browser Use cloud browser is used only with `--browser cloud`
@@ -129,8 +131,12 @@ business-school page `usnews.com/best-graduate-schools/top-business-schools/<sch
 acceptance rate, GPA, GMAT, work experience, international %, female %, average age, enrollment and rank for free;
 these count as program-level values and their cell comment names the profile. Online Economics is not a business
 program, so for that sheet the online business profile only gives `school-wide` values. The business-school page lists
-the specialty ranks (Finance, Marketing, Business Analytics, Accounting...); its free class stats are MBA figures,
-so they are only used for MBA sheets. `best-colleges` (undergraduate) pages are always rejected.
+the specialty ranks (Finance, Marketing, Business Analytics, Accounting...). Its GMAT, GPA and GRE are behind
+the paid U.S. News Compass, so they cannot be read; its free figures (e.g. specialty master's international % and
+gender, enrollment, acceptance rate) are school-level, so for non-MBA sheets they are only used as the
+`school-wide` fallback. The profile is found from links on U.S. News pages already fetched for the row (the
+graduate rankings page links it; online profiles via the school's online-education page), then Bing, then
+DuckDuckGo, so a Bing challenge page no longer loses it. `best-colleges` (undergraduate) pages are always rejected.
 
 ### IPEDS (conferrals and graduate-share proxies)
 

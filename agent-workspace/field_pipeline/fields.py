@@ -176,7 +176,8 @@ USNEWS_LABEL = {"online-mba": "U.S. News online MBA profile",
                 "online-other": "U.S. News online business master's profile: the school's business programs, not "
                                 "this (non-business) program",
                 "mba": "U.S. News business school profile (MBA figures)",
-                "business-school": "U.S. News business school profile"}
+                "business-school": "U.S. News business school profile: school-level figures (all MBA / specialty "
+                                   "master's students); its GMAT, GPA and GRE are behind the paid Compass"}
 USNEWS_STATS_GROUPS = ("scores", "class", "outcomes")
 
 

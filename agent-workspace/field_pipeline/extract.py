@@ -112,8 +112,8 @@ def judge(field: Field, group: str, item: dict, best: list[Chunk], by_id: dict, 
             note = USNEWS_LABEL[usnews]
             if applies == "school-wide" and usnews_program_level(usnews, c.url):
                 applies = "target"
-            elif usnews == "business-school" and applies != "target":  # its free class stats are MBA figures
-                applies = "other"
+            elif not usnews_program_level(usnews, c.url) and applies == "target":
+                applies = "school-wide"  # business-school / online-business figures are not this program's
         status, detail = check(field, value, quote, full(c), applies, f"{c.url} {c.title}")
         return status, detail, note
 

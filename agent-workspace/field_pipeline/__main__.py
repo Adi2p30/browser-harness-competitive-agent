@@ -260,13 +260,16 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
 
     cells, decisions, tally = [], [], Counter()
     stopped = False  # browser gone: remaining rows are written from stored results only, so no earlier cell is lost
+    started = time.time()
     for i, row in enumerate(rows, 1):
+        elapsed = (time.time() - started) / 60
+        eta = f", ETA ~{elapsed / (i - 1) * (len(rows) - i + 1):.0f} min" if i > 1 else ""
         fields, links, unmapped = plan(columns[row.sheet])
         wanted = {c: f for c, f in fields.items() if args.overwrite or c in row.blanks}
         conferral_cols = [c for c in columns[row.sheet] if ip and c and CONFERRALS.search(c)
                           and (args.overwrite or c in row.blanks)]
-        log.info("=== [%d/%d] %s | %s | %s | %d field(s)", i, len(rows), row.sheet, row.university,
-                 row.program or "-", len(wanted) + len(conferral_cols))
+        log.info("=== [%d/%d] %s | %s | %s | %d field(s) | elapsed %.1f min%s", i, len(rows), row.sheet,
+                 row.university, row.program or "-", len(wanted) + len(conferral_cols), elapsed, eta)
         if unmapped:
             log.debug("unmapped columns: %s", unmapped)
         if not wanted and not conferral_cols:
@@ -413,13 +416,15 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             w.writerow([row.sheet, row.row, row.university, row.program, c, r.get("status"), r.get("cycle"),
                         r.get("value"), r.get("url"), r.get("quote"), r.get("detail")])
     total = sum(tally.values())
-    log.info("DONE: %d cells written -> %s", written, dest)
+    log.info("DONE: %d cells written -> %s | %.1f min for %d row(s)", written, dest, (time.time() - started) / 60,
+             len(rows))
     log.info("status counts: %s | fill rate %.0f%% (2026-2027 only: %.0f%%)", dict(tally),
              100 * sum(tally[s] for s in FILLED) / total if total else 0,
              100 * (tally["found"] + tally["computed"]) / total if total else 0)
     log.info("browser pages: %d ok, %d failed | cloud sessions: %d | searches: %s, disabled: %s", fetcher.browser_ok,
              fetcher.browser_fail, fetcher.sessions, discoverer.searcher.stats, sorted(discoverer.searcher.disabled) or "none")
-    print(f"\n{written} cells -> {dest}\ndecisions -> {out_dir / 'decisions.csv'}\n{dict(tally)}")
+    print(f"\n{written} cells -> {dest}\ndecisions -> {out_dir / 'decisions.csv'}\n{dict(tally)}"
+          f"\nelapsed: {(time.time() - started) / 60:.1f} min for {len(rows)} row(s)")
     return {"rows": len(rows), "written": written, "tally": dict(tally)}
 
 

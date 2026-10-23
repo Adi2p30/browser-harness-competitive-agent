@@ -31,6 +31,9 @@ GENERIC_WORDS = {"online", "master", "masters", "science", "program", "degree", 
 NAME_STOP = {"the", "of", "at", "and", "in", "main", "campus"}
 USNEWS_ONLINE = re.compile(r"https://www\.usnews\.com/education/online-education/([a-z0-9-]+?)-([A-Z]*\d+)(?=/|$|\?|#)")
 USNEWS_BSCHOOL = re.compile(r"https://www\.usnews\.com/best-graduate-schools/top-business-schools/([a-z0-9-]+)-(\d+)(?=/|$|\?|#)")
+# any U.S. News graduate-school page of a school ('.../best-graduate-schools/clark-university-165334/overall-rankings'):
+# the slug-id also names its online-education school page
+USNEWS_GRAD = re.compile(r"https://www\.usnews\.com/best-graduate-schools/(?:[a-z-]+-schools/)?([a-z0-9-]+?)-(\d+)(?=/|$|\?|#)")
 
 
 def slug(name: str) -> str:
@@ -161,14 +164,22 @@ class Discoverer:
         self._usnews: dict[tuple[str, str], str | None] = {}
         self._lists: dict[tuple[str, str], list[str]] = {}
 
-    def usnews_profile(self, university: str, kind: str) -> str | None:
-        """URL of the U.S. News page for the university's program category (fields.USNEWS_PROFILE), via Bing."""
+    def usnews_profile(self, university: str, kind: str, known: list[str] = ()) -> str | None:
+        """URL of the U.S. News page for the university's program category (fields.USNEWS_PROFILE). First from the
+        links of U.S. News pages already fetched for the row (the graduate rankings page links the business-school
+        profile; online profiles are linked from the school's online-education page), then Bing, then DuckDuckGo."""
         key = (university.casefold(), kind)
         if key not in self._usnews:
+            url = self._usnews_from_known(university, kind, known)
+            if url:
+                log.info("U.S. News %s profile for %s: %s (from fetched U.S. News pages)", kind, university, url)
+                self._usnews[key] = url
+                return url
             online = kind.startswith("online")
             q = f"{university} usnews {'online-education business' if online else 'best graduate business schools'}"
-            url, want = None, re.compile(USNEWS_PROFILE[kind])
-            for _, href in self.searcher.bing(q, 10):
+            want = re.compile(USNEWS_PROFILE[kind])
+            hits = self.searcher.bing(q, 10) or self.searcher.ddg(q, 10)
+            for _, href in hits:
                 m = (USNEWS_ONLINE if online else USNEWS_BSCHOOL).match(href)
                 if not (m and same_school(m.group(1), university)):
                     continue
@@ -182,6 +193,26 @@ class Discoverer:
             log.info("U.S. News %s profile for %s: %s", kind, university, url or "not found")
             self._usnews[key] = url
         return self._usnews[key]
+
+    def _usnews_from_known(self, university: str, kind: str, known: list[str]) -> str | None:
+        want = re.compile(USNEWS_PROFILE[kind])
+        ids = []
+        for u in known:
+            if "usnews.com" not in u:
+                continue
+            page = self.store.page(u) or {}
+            for _, link in page.get("links") or []:
+                m = USNEWS_BSCHOOL.match(link) or USNEWS_ONLINE.match(link)
+                if want.search(link) and m and same_school(m.group(1), university):
+                    return clean_url(link)
+            if (m := USNEWS_GRAD.match(u)) and same_school(m.group(1), university):
+                ids.append(f"{m.group(1)}-{m.group(2)}")
+        if kind.startswith("online"):  # the school's online-education page links its online business/MBA profiles
+            for slug_id in dict.fromkeys(ids):
+                links = self.get(f"https://www.usnews.com/education/online-education/{slug_id}").get("links") or []
+                if url := next((clean_url(u) for _, u in links if want.search(u)), None):
+                    return url
+        return None
 
     def ranking_lists(self, sheet: str, program: str, group: str) -> list[str]:
         """Publisher pages ranking the sheet's program category (searched once per sheet; the school is looked up
@@ -269,7 +300,7 @@ class Discoverer:
                         open_page(url, group, 50 - rank, f"search:{src}", follow=not g.sites)
 
         if self.use_search and usnews and set(groups) & {*USNEWS_STATS_GROUPS, "rank_usnews"}:
-            if url := self.usnews_profile(university, usnews):
+            if url := self.usnews_profile(university, usnews, sorted(done)):
                 for group in set(groups) & {*USNEWS_STATS_GROUPS, "rank_usnews"}:
                     open_page(url, group, 60, "usnews-profile", follow=False)
         if self.use_search and sheet:

@@ -279,7 +279,10 @@ def test_usnews_profile_counts_as_program_level():
     b = Chunk("C2", "https://www.usnews.com/best-graduate-schools/top-business-schools/boston-college-01107",
               "Boston College", "International students\n31%")
     mba = {"value": "31%", "quote": "International students 31%", "excerpt": "C2", "applies_to": "school-wide"}
-    assert judge(intl, "class", mba, [b], {"C2": b}, full, "business-school")["status"] == "other-program"
+    bs = judge(intl, "class", mba, [b], {"C2": b}, full, "business-school")  # residential MS: school-level figure
+    assert bs["status"] == "school-wide" and "Compass" in bs["detail"]
+    mba["applies_to"] = "target"  # even if the model calls it the program's, it is the business school's
+    assert judge(intl, "class", mba, [b], {"C2": b}, full, "business-school")["status"] == "school-wide"
 
 
 def test_prior_record_match():
@@ -508,3 +511,28 @@ def test_not_published_only_when_nothing_was_lost(tmp_path):
     results = {"Average GMAT": {"status": "not-found"}}
     mark_not_published(store, row, wanted, results, "not-found")
     assert results["Average GMAT"]["status"] == "not-found"  # a lost profile page: we may have missed it
+
+
+def test_usnews_profile_from_fetched_pages(tmp_path):
+    from field_pipeline.discover import Discoverer
+    from field_pipeline.store import Store
+    store = Store(tmp_path / "p.sqlite")
+    rank = "https://www.usnews.com/best-graduate-schools/clark-university-165334/overall-rankings"
+    store.save_page({"url": rank, "status": "ok", "text": "x", "links": [
+        ["Business", "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-165334"]]})
+    online = "https://www.usnews.com/education/online-education/clark-university-165334"
+    store.save_page({"url": online, "status": "ok", "text": "x", "links": [
+        ["Business", "https://www.usnews.com/education/online-education/clark-university-OBUS0123/business"]]})
+
+    class S:  # searching must not be needed
+        def bing(self, q, n):
+            raise AssertionError("searched")
+        ddg = bing
+
+    d = Discoverer.__new__(Discoverer)
+    d.store, d.searcher, d._usnews = store, S(), {}
+    d.get = lambda url: store.page(url) or {}
+    assert d.usnews_profile("CLARK UNIVERSITY", "business-school", [rank]) == \
+        "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-165334"
+    assert d.usnews_profile("CLARK UNIVERSITY", "online-business", [rank]) == \
+        "https://www.usnews.com/education/online-education/clark-university-OBUS0123/business"
