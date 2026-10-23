@@ -41,7 +41,7 @@ Useful variations:
 | Cloud session length limit (default 15 min) | `--session-minutes 15` |
 | Allow plain HTTP when the browser can't read a page | `--http-fallback` |
 | Debugging only: no browser at all | `--browser none` |
-| New research for every cell, ignoring everything cached (pages, results, earlier links) | `--fresh` |
+| New research for every cell, ignoring cached pages and results (earlier-found Website Links are kept) | `--fresh` |
 | Ask the LLM again for schools already done | `--reextract` |
 | Also research cells that already have a value | `--overwrite` |
 | Skip the Bing search step | `--no-search` |
@@ -112,8 +112,9 @@ Each field tries, in order: 2026-2027 (or an undated value) → 2025-2026 → 20
 `fields.py`: deadlines never fall back (an old deadline is wrong), tuition, scholarships and deposits go back one
 year, everything else (class profile, outcomes, rankings, structure) two. The model returns up to 3 dated
 candidates per field and the newest one that passes wins; the second pass also retries fields that only found an
-older year. A row without a Website Link takes last year's link, else a Bing search for a `.edu` page naming the
-program (written to the workbook in yellow, so check it).
+older year. A row without a Website Link takes last year's link, else a search for a `.edu` page naming the
+program (Bing, or DuckDuckGo when Bing finds nothing or shows a challenge page; written to the workbook in yellow,
+so check it). Links found this way are reused by later runs, including `--fresh` ones.
 
 ### U.S. News program profiles
 
@@ -148,11 +149,13 @@ Class stats often hide in animated counters, multi-column tables and infographic
 
 - sets "by the numbers" counters to the target in their data attribute; if some still read 0 it scrolls the
   page (with a forced render, since the pipeline's tab is in the background) and reads them again; counters
-  still at 0 become `[counter not loaded]` so a real-looking 0% is never extracted. Some counters only run in
+  still at 0 become `[counter not loaded]` so a real-looking 0% is never extracted. Tallies ("0/4") and counters
+  in navigation, headers, buttons and forms ("0 Shortlisted") are left alone. Some counters only run in
   the visible tab: the cloud browser shows the pipeline's tab for them; in your own Chrome add `--foreground`
   to do the same (a few seconds per such page, then your tab is shown again);
 - writes table cells with their column header (`Average GMAT | MSF: 640 | MSBA: 655`) when a table has 3+ columns;
-- keeps image alt text, SVG chart labels and `<dt>/<dd>` pairs as text;
+- keeps image alt text and SVG chart labels that contain a number (not icon names such as "down arrow"), and
+  `<dt>/<dd>` pairs, as text;
 - OCRs large images on profile-like pages when `tesseract` is installed (`brew install tesseract`; optional).
 
 Pages and results are cached in `agent-workspace/field_pipeline/data/pipeline.sqlite`, so a rerun only does new

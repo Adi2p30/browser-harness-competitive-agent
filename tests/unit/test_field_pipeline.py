@@ -398,7 +398,7 @@ def test_store_fresh_hides_earlier_work(tmp_path):
     old.save_result("k", "Average GMAT", "scores", {"status": "found", "value": "600"})
     old.add_candidate("k", "https://x.edu/a", "start", 1, "start")
     fresh = Store(db, fresh_since=time.time() + 1)
-    assert fresh.page("https://x.edu/a") is None and fresh.results("k") == {} and fresh.start_url("k") is None
+    assert fresh.page("https://x.edu/a") is None and fresh.results("k") == {}
     assert Store(db).page("https://x.edu/a")["text"] == "old"  # a normal run still reuses it
 
 
@@ -413,3 +413,14 @@ def test_version_folders_never_overwrite(tmp_path):
     record_run(b, 0, "failed", args, {})
     lines = (tmp_path / "Book_field_pipeline" / "runs.csv").read_text().splitlines()
     assert len(lines) == 3 and lines[1].startswith(a.name) and ",failed," in lines[2]
+
+
+def test_icon_labels_dropped_and_fresh_keeps_links(tmp_path):
+    import time
+    from field_pipeline.store import Store
+    text = html_to_page('<p>x</p><svg><title>down arrow</title></svg><img alt="compare filled"><img alt="Class of 2026: 40% women">',
+                        "https://x.edu")[1]
+    assert "arrow" not in text and "compare" not in text and "[image: Class of 2026: 40% women]" in text
+    db = tmp_path / "p.sqlite"
+    Store(db).add_candidate("k", "https://x.edu/ms-econ", "start", 1, "start")
+    assert Store(db, fresh_since=time.time() + 1).start_url("k") == "https://x.edu/ms-econ"

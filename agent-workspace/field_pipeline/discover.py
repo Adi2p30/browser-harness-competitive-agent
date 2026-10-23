@@ -196,17 +196,22 @@ class Discoverer:
         return self._lists[key]
 
     def find_start(self, university: str, program: str) -> str | None:
-        """Program page for a row without a Website Link: the best .edu Bing hit naming the program and school."""
+        """Program page for a row without a Website Link: the best .edu search hit naming the program and school.
+        Bing first; DuckDuckGo when Bing finds nothing usable (or is switched off after a challenge page)."""
         words, uni = program_words(program), tokens(university) - NAME_STOP - {"university", "college"}
-        best, best_s = None, 0
-        for title, url in self.searcher.bing(f"{university} {program}", 10):
-            host, text = urlparse(url).netloc.lower(), f"{title} {urlparse(url).path}".casefold().replace("-", "")
-            if not host.endswith(".edu") or UNDERGRAD_URL.search(url) or NOISE.search(url):
-                continue
-            s = sum(w in text for w in words)
-            if s and (not uni or uni & tokens(f"{title} {host}")) and s > best_s:
-                best, best_s = clean_url(url), s
-        log.info("start link for %s | %s: %s", university, program, best or "not found")
+        best, engine = None, ""
+        for engine, search in (("bing", self.searcher.bing), ("ddg", self.searcher.ddg)):
+            best_s = 0
+            for title, url in search(f"{university} {program}", 10):
+                host, text = urlparse(url).netloc.lower(), f"{title} {urlparse(url).path}".casefold().replace("-", "")
+                if not host.endswith(".edu") or UNDERGRAD_URL.search(url) or NOISE.search(url):
+                    continue
+                s = sum(w in text for w in words)
+                if s and (not uni or uni & tokens(f"{title} {host}")) and s > best_s:
+                    best, best_s = clean_url(url), s
+            if best:
+                break
+        log.info("start link for %s | %s: %s", university, program, f"{best} ({engine})" if best else "not found")
         return best
 
     def get(self, url: str) -> dict:

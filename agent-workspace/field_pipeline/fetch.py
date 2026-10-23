@@ -45,10 +45,18 @@ EXPAND_JS = r"""
 """
 
 
+# A counter element still showing 0: counter-like class, no children, text "0" (with a short prefix/suffix), not a
+# "0/4"-style tally, and not in site chrome (nav, header, buttons: "0 Shortlisted" or QS's "0/4 compare" really is 0).
+STUCK = r"""
+const stuck = el => !el.children.length && /^\D{0,3}0(\.0+)?\D{0,3}$/.test(el.textContent.trim())
+  && !/^\s*(\/|of\b)/i.test(el.nextSibling ? el.nextSibling.textContent || '' : '')
+  && !el.closest('nav, header, footer, aside, button, a, form, [role="navigation"], [role="button"], [role="dialog"]');
+const counters = () => document.querySelectorAll('[class*="count" i], [class*="odometer" i]');
+"""
 # "By the numbers" counters animate from 0 when scrolled into view; the target is usually in a data attribute.
 # Returns [counters set from attributes, counters still showing 0].
 COUNTERS_JS = r"""
-(() => {
+(() => {""" + STUCK + r"""
   const attrs = ['data-count', 'data-target', 'data-to', 'data-number', 'data-end', 'data-value', 'data-countup',
                  'data-final', 'data-stop', 'data-count-to', 'data-num', 'data-purecounter-end'];
   let set = 0, zero = 0;
@@ -64,17 +72,15 @@ COUNTERS_JS = r"""
       }
     }
   }
-  for (const el of document.querySelectorAll('[class*="count" i], [class*="odometer" i], [class*="stat" i], [class*="number" i]'))
-    if (!el.children.length && /^\D{0,3}0(\.0+)?\D{0,3}$/.test(el.textContent.trim())) zero++;
+  for (const el of counters()) if (stuck(el)) zero++;
   return [set, zero];
 })()
 """
 # Counters that never loaded would read as a real 0 (0% women): replace their text so the model cannot use them.
 MARK_ZERO_JS = r"""
-(() => {
+(() => {""" + STUCK + r"""
   let n = 0;
-  for (const el of document.querySelectorAll('[class*="count" i], [class*="odometer" i], [class*="stat" i], [class*="number" i]'))
-    if (!el.children.length && /^\D{0,3}0(\.0+)?\D{0,3}$/.test(el.textContent.trim())) { el.textContent = '[counter not loaded]'; n++; }
+  for (const el of counters()) if (stuck(el)) { el.textContent = '[counter not loaded]'; n++; }
   return n;
 })()
 """
@@ -98,8 +104,10 @@ def site(url: str) -> str:
 
 
 def _alt(text: str) -> str:
+    """Image / SVG text worth keeping: it states a number ('45% international'), not an icon name ('down arrow')."""
     text = " ".join((text or "").split())
-    return "" if len(text) < MIN_ALT or re.search(r"\blogo\b|\bicon\b|\.(png|jpe?g|svg|webp)$", text, re.I) else text
+    return text if len(text) >= MIN_ALT and re.search(r"\d", text) and not re.search(
+        r"\blogo\b|\bicon\b|\.(png|jpe?g|svg|webp)$", text, re.I) else ""
 
 
 def html_to_page(html: str, url: str) -> tuple[str, str, list[tuple[str, str]]]:

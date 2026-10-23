@@ -1,6 +1,7 @@
 """SQLite store shared by every stage. Pages are keyed by URL and reused across rows, sheets and runs.
-With `fresh_since` (a --fresh run) anything stored before that time is invisible: pages are fetched again and
-every field is researched again; what this run stores is still shared by later rows and later runs."""
+With `fresh_since` (a --fresh run) pages and results stored before that time are invisible: pages are fetched
+again and every field is researched again; what this run stores is still shared by later rows and later runs.
+Website Links found by search in earlier runs are inputs, not results, so they are still reused."""
 import json
 import sqlite3
 import threading
@@ -58,8 +59,6 @@ class Store:
 
     def start_url(self, row_key: str) -> str | None:
         """The start link an earlier run used for this row (it may have been found by search)."""
-        if self.since:
-            return None
         row = self.db.execute("SELECT url FROM candidates WHERE row_key=? AND source='start'", (row_key,)).fetchone()
         return row[0] if row else None
 

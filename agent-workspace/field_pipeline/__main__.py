@@ -149,8 +149,9 @@ def main() -> None:
     ap.add_argument("--reextract", action="store_true", help="ask the LLM again even if results are stored")
     ap.add_argument("--overwrite", action="store_true", help="research cells that already have a value")
     ap.add_argument("--fresh", action="store_true",
-                    help="new research for every cell: pages fetched again, nothing reused from earlier runs, cells "
-                         "that already have a value researched too (= --overwrite --reextract + fresh pages)")
+                    help="new research for every cell: pages fetched again, no stored results reused, cells that "
+                         "already have a value researched too (= --overwrite --reextract + fresh pages); Website Links "
+                         "found by earlier runs are kept")
     ap.add_argument("--workers", type=int, default=2, help="concurrent RCAC calls per row (default 2)")
     ap.add_argument("--chunks", type=int, default=10, help="text chunks (~1,500 chars each) per LLM call (default 10)")
     ap.add_argument("--no-second-pass", action="store_true",
