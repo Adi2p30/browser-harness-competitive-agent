@@ -1,63 +1,55 @@
-<img src="https://raw.githubusercontent.com/browser-use/media/main/browser-harness/banner-ink.svg" alt="Browser Harness" width="100%" />
+# Purdue Competitive Analysis
 
-# Browser Harness ♞
+Fills Purdue's competitive-analysis workbook — one row per competitor program — by browsing
+each school's own pages, asking an LLM for values, and keeping only what it can quote back
+from the page. A Flask web app starts a run and shows every step live; a knowledge-base export
+turns the results into a comparison report and an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+bundle.
 
-Connect an LLM directly to your real browser through one editable CDP websocket. The agent writes missing helpers as it works, so the harness improves with every task.
+See [`docs/okf/project/index.md`](docs/okf/project/index.md) for how the pieces fit together.
 
-Try browser-harness in [Browser Use Cloud](https://cloud.browser-use.com/v4?utm_campaign=browser-harness-use-in-cloud&utm_source=github) or paste the setup prompt into your coding agent.
+## Run the web app
 
-```
-  ● agent: wants to upload a file
-  │
-  ● agent-workspace/agent_helpers.py → helper missing
-  │
-  ● agent writes it                         agent_helpers.py
-  │                                                       + custom helper
-  ✓ file uploaded
+```bash
+./run-webapp
 ```
 
-**You will never use the browser again.**
+Open the printed `http://127.0.0.1:5000`. Pick a sheet (and optionally a school filter, row
+limit, or browser mode), start a run, and watch it discover, fetch, extract, and validate each
+field live. **A local-mode run drives your real Chrome** (`--browser local`, the default) —
+`./browser-harness --doctor` first if it can't attach.
 
-## See it work
+## Build the knowledge base (report + OKF bundle)
 
-**Task:** "Open my X profile, find my latest 20 video posts, and download them."
-
-[![Download my latest 20 X videos](docs/download-latest-20-x-videos.gif)](https://browser-use.com/showcase/videos/download-latest-20-x-videos.mp4)
-
-## Setup prompt
-
-Paste into Claude Code or Codex:
-
-```text
-Install or upgrade browser-harness to the latest stable version with uv using Python 3.12, register the skill from `browser-harness skill`, and connect it to my browser. Ask whether I want local browser recordings enabled; default to no and preserve my existing preference on upgrades. Follow https://github.com/browser-use/browser-harness/blob/main/install.md if setup or connection fails.
+```bash
+cd agent-workspace
+uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf --with pyyaml \
+  python -m knowledge_base "../EDIT Competitive Analysis Research 2026-2027.xlsx"
 ```
 
-The agent will open `chrome://inspect/#remote-debugging`. On first setup, tick
-the checkbox so the agent can connect to your browser:
+Writes `<workbook>_kb/competitive_analysis.html` (open in any browser) and
+`docs/okf/knowledge/` (browse it from the web app's **Knowledge** page, or any OKF-aware tool).
 
-<img src="docs/setup-remote-debugging.png" alt="Remote debugging setup" width="520" style="border-radius: 12px;" />
+## Run field_pipeline directly (CLI)
 
-## How it works
+See [`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md) for
+every flag; the web app's run form covers the common ones.
 
-- [`install.md`](install.md) connects the agent to your browser.
-- [`SKILL.md`](SKILL.md) teaches it the browser workflow.
-- [`src/browser_harness/`](src/browser_harness/) stays protected while the agent writes reusable helpers in its local workspace.
+## The underlying browser harness
 
-## Scale with Browser Use Cloud
+`field_pipeline` drives the browser through the vendored, general-purpose
+[browser-harness](https://github.com/browser-use/browser-harness) project — kept intact rather
+than reimplemented. `install.md` connects it to your browser; `SKILL.md` documents its helpers;
+`AGENTS.md` is the map of `src/browser_harness/`. `./browser-harness --doctor` diagnoses
+install/daemon/browser state; `./browser-harness --reload` restarts the daemon after a code
+change.
 
-Use your local browser for logged-in, personal work. When you want many browsers in parallel—with live previews, proxies, stealth, CAPTCHA solving, and more—scale with [Browser Use Cloud](https://cloud.browser-use.com/new-api-key).
+## Tests
 
-## MCP server
+```bash
+uv run --with pytest python -m pytest tests/unit -q
+uv run --with pytest --with pyyaml python -m pytest webapp/tests -q
+```
 
-`browser-harness-mcp` exposes the browser control helpers as MCP tools over
-stdio, so any MCP client (Claude Code, Devin, Cursor, etc.) can drive the
-browser without writing a second CDP layer. See [docs/MCP.md](docs/MCP.md) for
-setup and client configuration.
-
-## Contributing
-
-Bug fixes, documentation improvements, and agent-generated domain skills are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-[The Bitter Lesson of Agent Harnesses](https://browser-use.com/posts/bitter-lesson-agent-harnesses) · [Web Agents That Actually Learn](https://browser-use.com/posts/web-agents-that-actually-learn)
+(`--with openpyxl --with beautifulsoup4 --with pyyaml` additionally enables the
+`field_pipeline`/`knowledge_base`/OKF tests, which otherwise skip.)

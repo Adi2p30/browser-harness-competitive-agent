@@ -1,4 +1,8 @@
 browser-harness is a thin layer that connects agents to browsers via an editable CDP harness.
+This checkout also carries a Purdue tool built on it, `agent-workspace/field_pipeline` +
+`knowledge_base`, driven from `webapp/` — see [`README.md`](README.md) and
+[`docs/okf/project/index.md`](docs/okf/project/index.md) for that part; everything below is
+about the harness core it runs on.
 
 # Code priorities
 - Clarity
@@ -18,7 +22,9 @@ Core code lives in `src/browser_harness/`:
 
 An agent operating the harness only edits inside `agent-workspace/`:
 - `agent_helpers.py` — task-specific browser helpers the agent adds
-- `domain-skills/` — skills the agent writes and reads
+- `domain-skills/` — skills the agent writes and reads (none yet in this checkout)
+- `field_pipeline/`, `knowledge_base/` — the Purdue tool, not agent-written scratch space;
+  see [`docs/okf/project/components/index.md`](docs/okf/project/components/index.md)
 
 Package/CLI name = `browser-harness`. Skill identity (`name` + trigger) = `browser-use` (do not rename).
 
@@ -53,4 +59,5 @@ Notes:
 
 # Contributing
 Consider what is really needed. Prefer the smallest diff that fixes the bug.
-Domain skills under `agent-workspace/domain-skills/` are agent-generated when possible — hand-author only when necessary.
+Domain skills under `agent-workspace/domain-skills/` (`BH_DOMAIN_SKILLS=1`) are agent-generated
+when possible — hand-author only when necessary.
