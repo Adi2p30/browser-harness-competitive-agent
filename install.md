@@ -36,8 +36,7 @@ Run `browser-harness recordings`. If it reports `(default)`, ask the user once:
 
 > Enable local browser recordings? This saves screenshots and action traces on
 > this machine, which may include sensitive page content, so you can later ask
-> “show me what you did” or request a video. Videos are never generated
-> automatically. [y/N]
+> “show me what you did”. [y/N]
 
 Default to no. Run `browser-harness recordings enable` only after yes; otherwise
 run `browser-harness recordings disable`. Preserve an existing `(config)` or

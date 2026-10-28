@@ -195,7 +195,7 @@ Cloud profile cookie sync reference: https://github.com/browser-use/browser-harn
   The second positional argument is a session ID, not a parameters dictionary.
   When targeting an explicit session, use `session_id="..."` alongside the keywords.
 
-## Recordings and Videos
+## Recordings
 
 Fresh installs do not record. Users can enable local background traces:
 
@@ -219,10 +219,7 @@ browser-harness recordings --latest
 ```
 
 Use it only if timestamps and pages match; otherwise say the work was not
-captured. Never reenact a completed task. For a video, follow
-[make-video.md](https://github.com/browser-use/browser-harness/blob/main/interaction-skills/make-video.md).
-If sub-agents are available, they may handle post-production from the exact
-recording path while the main agent returns the task result.
+captured. Never reenact a completed task.
 
 ## Interaction Skills
 
@@ -236,7 +233,6 @@ If you get stuck on a browser mechanic, check https://github.com/browser-use/bro
 - drag-and-drop.md
 - dropdowns.md
 - iframes.md
-- make-video.md
 - network-requests.md
 - print-as-pdf.md
 - profile-sync.md
