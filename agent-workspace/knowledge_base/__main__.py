@@ -222,6 +222,8 @@ def main() -> None:
     ap.add_argument("--decisions", type=Path, action="append",
                     help="field_pipeline decisions.csv to use (repeatable; default: every version of the workbook's runs)")
     ap.add_argument("--out", type=Path, help="output folder (default: <workbook>_kb/)")
+    ap.add_argument("--no-okf", action="store_true",
+                    help="skip exporting docs/okf/knowledge/ (the Open Knowledge Format bundle)")
     args = ap.parse_args()
     wb = args.workbook
     olds = sorted(wb.parent.glob("OLD *.xlsx"))
@@ -238,6 +240,11 @@ def main() -> None:
     for f in kb["facts"]:
         by[f["s"]] = by.get(f["s"], 0) + 1
     print(f"{len(files)} pipeline version(s); {len(kb['programs'])} programs, {len(kb['facts'])} facts {by} -> {out}")
+    if not args.no_okf:
+        from .okf_export import write_bundle
+        summary = f"{len(kb['programs'])} programs, {len(kb['facts'])} facts {by}"
+        bundle = write_bundle(kb, wb.parent, summary)
+        print(f"OKF bundle -> {bundle}")
 
 
 if __name__ == "__main__":
