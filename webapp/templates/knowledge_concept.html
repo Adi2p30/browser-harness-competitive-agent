@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('knowledge_index') }}">&larr; Knowledge</a></p>
+<h1>{{ title }}
+  {% if frontmatter.status %}<span class="status {{ frontmatter.status }}">{{ frontmatter.status }}</span>{% endif %}
+</h1>
+{% if frontmatter.generated %}
+<p class="updated">Last updated {{ frontmatter.generated.at }}{% if frontmatter.stale_after %} &middot; stale after {{ frontmatter.stale_after }}{% endif %}</p>
+{% endif %}
+
+<div class="okf-body">{{ body_html | safe }}</div>
+{% endblock %}

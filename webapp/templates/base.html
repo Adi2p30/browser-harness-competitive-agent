@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Competitive Analysis{% endblock %} · Purdue</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('index') }}">PURDUE <span>Competitive Analysis</span></a>
+  <nav>
+    <a href="{{ url_for('index') }}">Run</a>
+    <a href="{{ url_for('knowledge_index') }}">Knowledge</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,173 @@
+:root {
+  --black: #000000;
+  --gold: #CFB991;      /* Boilermaker Gold */
+  --rush: #DAAA00;
+  --field: #DDB945;
+  --dust: #EBD99F;
+  --aged: #8E6F3E;       /* dark gold/bronze — the only gold with enough contrast as text-on-light */
+  --steel: #555960;
+  --cool-gray: #6F727B;
+  --railway-gray: #9D9795;
+  --steam: #C4BFC0;
+  --paper: #FBF8F2;      /* page background: light, warm, "pretty" rather than stark white */
+  --surface: #FFFFFF;    /* cards/panels on the paper background */
+  --ink: #1C1B19;        /* body text */
+  --line: #E4DCC8;       /* light-mode borders/rules */
+  --dark-panel: #14151A; /* the one deliberately dark, gold-on-black zone: the live log */
+  --dark-border: #2A2B2D;
+  --error: #B3261E;
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 3px solid var(--gold);
+  background: var(--black);
+}
+
+.brand {
+  color: var(--gold);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  font-size: 1.1rem;
+}
+.brand span { color: var(--steam); font-weight: 400; margin-left: 0.4em; letter-spacing: normal; }
+
+.topbar nav a {
+  color: var(--steam);
+  text-decoration: none;
+  margin-left: 1.5rem;
+  font-weight: 600;
+}
+.topbar nav a:hover { color: var(--gold); }
+
+main { max-width: none; margin: 0; padding: 1.75rem 2.5rem 3rem; }
+
+h1 { color: var(--black); margin-top: 0; font-size: 2.1rem; border-bottom: 3px solid var(--gold); padding-bottom: 0.4rem; }
+h2 { color: var(--black); font-size: 1.5rem; border-bottom: 1px solid var(--line); padding-bottom: 0.3rem; }
+
+a { color: var(--aged); }
+a:hover { color: var(--rush); }
+
+code { background: var(--surface); border: 1px solid var(--line); padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.92em; }
+pre.command, p.command code {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--gold);
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.notice, .warn {
+  padding: 0.75rem 1rem; border-radius: 4px; background: var(--surface);
+  border: 1px solid var(--line); border-left: 3px solid var(--gold);
+}
+.warn { border-left-color: var(--error); color: #7a231d; background: #FBEEEC; }
+
+.run-form { max-width: 1100px; }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 1.25rem; padding: 1.25rem 1.5rem; background: var(--surface); }
+legend { color: var(--black); font-weight: 700; font-size: 1.1em; padding: 0 0.3em; }
+.hint { color: var(--steel); font-weight: 400; font-size: 0.8em; }
+
+.run-form label { display: block; margin: 0.7rem 0; color: var(--ink); font-size: 1.05em; }
+.run-form label.checkbox { display: flex; align-items: center; gap: 0.5em; }
+.run-form input[type=text], .run-form input[type=number], .run-form select {
+  display: block; margin-top: 0.4rem; width: 100%; max-width: 480px;
+  font-size: 1em; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 0.5rem 0.7rem;
+}
+.picker select, .picker .picker-freewrite {
+  display: block; margin-top: 0.4rem; max-width: 480px; width: 100%;
+  font-size: 1em; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 0.5rem 0.7rem;
+}
+.freewrite-row { display: flex; gap: 0.5rem; margin-top: 0.5rem; align-items: center; max-width: 480px; }
+.freewrite-row .picker-freewrite { margin-top: 0; }
+.freewrite-row .picker-add { background: var(--black); color: var(--gold); padding: 0.4rem 0.9rem; flex-shrink: 0; }
+.freewrite-row .picker-add:hover { background: var(--steel); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  background: var(--gold); color: var(--black); border-radius: 12px;
+  padding: 0.15rem 0.3rem 0.15rem 0.7rem; font-size: 0.85em; font-weight: 600;
+}
+.chip-remove {
+  background: transparent; color: var(--black); border: none; border-radius: 50%;
+  width: 1.3em; height: 1.3em; line-height: 1; font-size: 1em; padding: 0; cursor: pointer;
+}
+.chip-remove:hover { background: var(--black); color: var(--gold); }
+
+button, .gold, .stop {
+  font-weight: 700;
+  font-size: 1.05em;
+  border: none;
+  border-radius: 5px;
+  padding: 0.7rem 1.5rem;
+  cursor: pointer;
+}
+button.gold, button[type=submit] { background: var(--black); color: var(--gold); }
+button.gold:hover, button[type=submit]:hover { background: var(--steel); }
+button.stop { background: var(--error); color: white; }
+form.inline { display: inline; margin-left: 0.75rem; }
+
+.status { padding: 0.15em 0.6em; border-radius: 10px; font-size: 0.85em; font-weight: 700; text-transform: uppercase; }
+.status.running { background: var(--rush); color: var(--black); }
+.status.done, .status.stable { background: var(--black); color: var(--gold); }
+.status.stopped { background: var(--cool-gray); color: white; }
+.status.error, .status.draft { background: var(--error); color: white; }
+
+.run-list { list-style: none; padding: 0; }
+.run-list li { padding: 0.3rem 0; border-bottom: 1px solid var(--line); }
+
+/* The one deliberately dark zone: live/past run logs read like a console, gold-on-black. */
+.steps { display: flex; flex-direction: column; gap: 0.75rem; max-height: 70vh; overflow-y: auto; margin: 1rem 0; }
+.row-card { border: 1px solid var(--dark-border); border-radius: 6px; background: var(--dark-panel); }
+.row-title { background: #0B0C0E; color: var(--gold); font-weight: 700; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--dark-border); border-radius: 6px 6px 0 0; }
+.phase { padding: 0.4rem 0.9rem; border-bottom: 1px solid var(--dark-border); }
+.phase:last-child { border-bottom: none; }
+.phase-label { color: var(--field); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+.log-line { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.92rem; color: var(--steam); white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+.log-line.level-error { color: #f3b3ac; }
+.log-line.level-warning { color: var(--field); }
+.log-line.level-debug { color: var(--cool-gray); }
+
+table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; font-size: 1em; background: var(--surface); }
+th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 0.6rem 0.8rem; vertical-align: top; }
+th { color: var(--black); border-bottom: 2px solid var(--gold); }
+tbody tr:nth-child(even) { background: #F6F1E6; }
+tbody tr:hover { background: var(--dust); }
+table.decisions tr.status-not-found td, table.decisions tr.status-llm-error td { color: var(--steel); }
+
+.updated { color: var(--steel); font-size: 0.95em; margin-top: -0.5rem; }
+
+.okf-body h1 { font-size: 1.3rem; }
+.okf-body h2 { font-size: 1.05rem; }
+.okf-body ul { padding-left: 1.2rem; }
+/* comparison tables can run to 30+ columns (one program x every college x every field) —
+   scroll horizontally instead of squashing every column unreadably thin */
+.okf-body { overflow-x: auto; }
+.okf-body table { width: auto; min-width: 100%; table-layout: fixed; }
+.okf-body td, .okf-body th { white-space: normal; word-break: break-word; }
+/* College name: narrow and wrapped, not a wide column eating room from the field values */
+.okf-body th:first-child, .okf-body td:first-child {
+  width: 170px; min-width: 170px; max-width: 170px; font-weight: 700;
+  position: sticky; left: 0; background: var(--surface); box-shadow: 1px 0 0 var(--line);
+}
+/* every field column: wide enough to read its value without squeezing to its shortest row */
+.okf-body th:not(:first-child), .okf-body td:not(:first-child) { width: 210px; min-width: 210px; }

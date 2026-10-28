@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }}{% endblock %}
+{% block content %}
+<h1>Run <code>{{ run.id }}</code></h1>
+<p class="command"><code>{{ run.command | join(' ') }}</code></p>
+<p>
+  Status: <span id="run-status" class="status {{ run.status }}">{{ run.status }}</span>
+  {% if run.status == "running" %}
+  <form method="post" action="{{ url_for('run_stop', run_id=run.id) }}" class="inline">
+    <button type="submit" class="stop">Stop</button>
+  </form>
+  {% endif %}
+</p>
+
+<div id="steps" class="steps"></div>
+<p id="run-ended" class="notice"{% if run.status == "running" %} hidden{% endif %}>Run ended: {{ run.status }}.</p>
+
+{% if decisions %}
+<h2>Decisions ({{ decisions|length }} cells)</h2>
+<table class="decisions">
+  <thead><tr><th>Sheet</th><th>University</th><th>Field</th><th>Status</th><th>Value</th><th>Source</th><th>Quote</th></tr></thead>
+  <tbody>
+  {% for d in decisions %}
+    <tr class="status-{{ d.status }}">
+      <td>{{ d.sheet }}</td><td>{{ d.university }}</td><td>{{ d.field }}</td>
+      <td>{{ d.status }}</td><td>{{ d.value }}</td>
+      <td>{% if d.source_url %}<a href="{{ d.source_url }}">link</a>{% endif %}</td>
+      <td>{{ d.quote }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<script>
+  window.RUN_ID = {{ run.id | tojson }};
+  window.PHASE_LABELS = {{ phase_labels | tojson }};
+</script>
+<script src="{{ url_for('static', filename='run.js') }}"></script>
+{% endblock %}

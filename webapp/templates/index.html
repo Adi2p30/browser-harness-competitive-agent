@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Run{% endblock %}
+{% block content %}
+<h1>Competitive Analysis Harness</h1>
+
+{% if rcac_warning %}
+<p class="warn">
+  <strong>{{ rcac_warning }}</strong><br>
+  Copy <code>.env.example</code> to <code>.env</code> in the repo root and fill in
+  <code>RCAC_API_KEY</code> (the Purdue RCAC GenAI Studio key field_pipeline uses for extraction).
+</p>
+{% endif %}
+
+{% if not xlsx %}
+<p class="warn">No <code>EDIT Competitive Analysis Research*.xlsx</code> workbook found in the repo root.</p>
+{% else %}
+<form method="post" action="{{ url_for('run_start') }}" class="run-form">
+  <p class="workbook">Workbook: <code>{{ xlsx.name }}</code></p>
+
+  <fieldset class="picker" data-name="sheet">
+    <legend>Program(s) <span class="hint">(none added = every program)</span></legend>
+    <select class="picker-select">
+      <option value="">+ Add a program…</option>
+      {% for sheet in sheets %}<option value="{{ sheet }}">{{ sheet }}</option>{% endfor %}
+    </select>
+    <div class="chips"></div>
+  </fieldset>
+
+  <fieldset class="picker" data-name="only">
+    <legend>School filter <span class="hint">(none added = every school)</span></legend>
+    <select class="picker-select">
+      <option value="">+ Add a school…</option>
+      {% for u in universities %}<option value="{{ u }}">{{ u }}</option>{% endfor %}
+    </select>
+    <div class="freewrite-row">
+      <input type="text" class="picker-freewrite" placeholder="or type a school name not listed, then Add">
+      <button type="button" class="picker-add">Add</button>
+    </div>
+    <div class="chips"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Other</legend>
+    <label>Row limit
+      <input type="number" name="limit" min="1" placeholder="no limit">
+    </label>
+    <label class="checkbox"><input type="checkbox" name="overwrite"> overwrite cells that already have a value</label>
+    <label class="checkbox"><input type="checkbox" name="fresh"> fresh (ignore every cached page/result)</label>
+    <label>Browser
+      <select name="browser">
+        <option value="local" selected>local Chrome (free)</option>
+        <option value="cloud">Browser Use Cloud (billed)</option>
+        <option value="auto">auto (cloud if key set, else local)</option>
+        <option value="none">none (HTTP only, debugging)</option>
+      </select>
+    </label>
+  </fieldset>
+
+  {% if running %}
+  <p class="hint">{{ running|length }} run{{ "s" if running|length != 1 else "" }} already going. Starting another
+    is fine; a <strong>local Chrome</strong> run started while another is still going shares that one browser and
+    may fight over the same tab — prefer Cloud or HTTP-only (<code>none</code>) for real concurrency, or stick to
+    one local run at a time.</p>
+  {% endif %}
+
+  <button type="submit" class="gold">Start run</button>
+</form>
+{% endif %}
+
+{% if running %}
+<h2>Running now</h2>
+<ul class="run-list">
+  {% for r in running %}
+  <li><a href="{{ url_for('run_view', run_id=r.id) }}">{{ r.id }}</a> — <span class="status running">running</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if runs %}
+<h2>Past runs this session</h2>
+<ul class="run-list">
+  {% for r in runs if r.status != "running" %}
+  <li><a href="{{ url_for('run_view', run_id=r.id) }}">{{ r.id }}</a> — <span class="status {{ r.status }}">{{ r.status }}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<script src="{{ url_for('static', filename='picker.js') }}"></script>
+{% endblock %}
