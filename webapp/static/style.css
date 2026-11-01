@@ -163,7 +163,10 @@ table.decisions tr.status-not-found td, table.decisions tr.status-llm-error td {
    scroll horizontally instead of squashing every column unreadably thin */
 .okf-body { overflow-x: auto; }
 .okf-body table { width: auto; min-width: 100%; table-layout: fixed; }
-.okf-body td, .okf-body th { white-space: normal; word-break: break-word; }
+.okf-body td, .okf-body th {
+  white-space: normal; word-break: break-word;
+  padding: 0.12rem 0.5rem; line-height: 1.2; font-size: 0.85em;  /* compact rows */
+}
 /* College name: narrow and wrapped, not a wide column eating room from the field values */
 .okf-body th:first-child, .okf-body td:first-child {
   width: 170px; min-width: 170px; max-width: 170px; font-weight: 700;
