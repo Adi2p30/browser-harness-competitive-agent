@@ -21,3 +21,9 @@ workbook. Imports `browser_harness.admin`/`helpers` in-process for local-mode br
 Every run writes `decisions.csv` (one row per cell decided) and `run.log`
 (`agent-workspace/field_pipeline/__main__.py:setup_logging`) in the new version folder; the web
 app tails that same log stream live instead of waiting for the run to finish.
+
+Monthly, `python -m field_pipeline.health <workbook.xlsx>` re-checks every stored quote against its live
+source page ([health](/okf/project/stages/health.md)). Its `recheck.csv` feeds `--recheck`, which
+researches only the flagged cells again. What neither settles goes to the review queue
+(`python -m field_pipeline.review`, the web app's Review page), where people's decisions
+(`reviews.csv`) override pipeline values in the knowledge base.

@@ -16,6 +16,7 @@
                copy (value + source comment + hyperlink), decisions.csv, run.log and llm.jsonl; every run is
                listed in <workbook>_field_pipeline/runs.csv. Earlier versions are never overwritten.
 Pages and results live in field_pipeline/data/pipeline.sqlite, so reruns reuse them (--fresh: nothing reused).
+--recheck <recheck.csv>: research again only the cells a source health check flagged (field_pipeline/health.py).
 """
 import argparse
 import csv
@@ -30,7 +31,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from . import llm
-from .discover import Discoverer, foreign_program, program_words
+from .discover import Discoverer, foreign_program, program_name, program_words
 from .extract import better, extract_group
 from .fetch import BrowserUnavailable, Fetcher, clean_url
 from .fields import FILLED, plan, usnews_kind
@@ -48,7 +49,8 @@ RETRY = ("not-found", "bad-quote", "bad-value", "other-program", "off-cycle", "f
 # Cell colours for values that are not 2026-2027 facts: one year back, two years back, last year's workbook,
 # IPEDS graduates standing in for the entering class.
 FILL = {"2025-2026": "FFF2CC", "2024-2025": "FCE4D6", "carried-forward": "E7E6E6", "ipeds-proxy": "DDEBF7",
-        "school-wide": "E4DFEC"}
+        "school-wide": "E4DFEC", "not-published": "F2F2F2"}
+NOT_PUBLISHED = "Not published"  # written into cells the program's own pages were read for and do not state
 CONFERRALS = re.compile(r"conferral", re.I)
 PUBLISHED_GROUPS = ("scores", "class", "outcomes")  # fields a program may simply not publish
 PROFILE_URL = re.compile(r"profile|by-the-numbers|facts|statistic|outcome|employment|class-of|cohort", re.I)
@@ -103,6 +105,15 @@ def apply_ipeds(ip: Ipeds, store: Store, row, wanted: dict, results: dict, confe
             results[c] = {"value": f"{share:g}%", "status": "ipeds-proxy", "url": url, "quote": None,
                           "detail": f"share of master's GRADUATES ({n} of {sum(got.totals)}), not the entering class; "
                                     f"{what}", "cycle": f"IPEDS {got.span}"}
+
+
+def read_recheck(path: Path) -> dict[tuple[str, int], set[str]]:
+    """{(sheet, row): fields} from a health check's recheck.csv."""
+    out: dict[tuple[str, int], set[str]] = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            out.setdefault((r["sheet"], int(r["row"])), set()).add(r["field"])
+    return out
 
 
 def prior_record(prior: dict, row) -> dict | None:
@@ -177,15 +188,19 @@ def main() -> None:
                          "already have a value researched too (= --overwrite --reextract + fresh pages); Website Links "
                          "found by earlier runs are kept")
     ap.add_argument("--workers", type=int, default=2, help="concurrent RCAC calls per row (default 2)")
-    ap.add_argument("--chunks", type=int, default=10, help="text chunks (~1,500 chars each) per LLM call (default 10)")
+    ap.add_argument("--chunks", type=int, default=18, help="text chunks (~1,500 chars each) per LLM call (default 18)")
     ap.add_argument("--no-second-pass", action="store_true",
                     help="skip the second LLM pass over the next-best chunks for fields still not found")
     ap.add_argument("--prior", type=Path, help="last year's workbook: its values fill cells still blank (carried-forward)"
                     "; default: the one 'OLD *.xlsx' next to the input, if there is exactly one")
     ap.add_argument("--no-prior", action="store_true", help="never carry values forward from last year's workbook")
-    ap.add_argument("--no-find-links", action="store_true", help="skip rows without a Website Link instead of searching")
+    ap.add_argument("--no-find-links", action="store_true", help="skip rows without a Website Link instead of searching for one "
+                    "(or researching on the university's site from IPEDS)")
     ap.add_argument("--no-ipeds", action="store_true", help="skip IPEDS (Average Conferrals, graduate-share proxies)")
     ap.add_argument("--db", type=Path, help="SQLite path (default field_pipeline/data/pipeline.sqlite)")
+    ap.add_argument("--recheck", type=Path,
+                    help="recheck.csv from `python -m field_pipeline.health`: research only those cells again, "
+                         "ignoring their stored values (the health check already refreshed their pages)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     if args.fresh:
@@ -255,6 +270,10 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             log.warning("IPEDS unavailable (%s); Average Conferrals left blank", exc)
     if args.only:
         rows = [r for r in rows if any(o.casefold() in r.university.casefold() for o in args.only)]
+    recheck = read_recheck(args.recheck) if args.recheck else None
+    if recheck is not None:
+        rows = [r for r in rows if (r.sheet, r.row) in recheck]
+        log.info("recheck: %d cell(s) on %d row(s) from %s", sum(map(len, recheck.values())), len(rows), args.recheck)
     rows = rows[:args.limit] if args.limit else rows
     log.info("%d row(s) on %d sheet(s) -> %s", len(rows), len(columns), out_dir)
 
@@ -265,9 +284,10 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
         elapsed = (time.time() - started) / 60
         eta = f", ETA ~{elapsed / (i - 1) * (len(rows) - i + 1):.0f} min" if i > 1 else ""
         fields, links, unmapped = plan(columns[row.sheet])
-        wanted = {c: f for c, f in fields.items() if args.overwrite or c in row.blanks}
-        conferral_cols = [c for c in columns[row.sheet] if ip and c and CONFERRALS.search(c)
-                          and (args.overwrite or c in row.blanks)]
+        redo = recheck.get((row.sheet, row.row), set()) if recheck is not None else set()
+        asked = (lambda c: c in redo) if recheck is not None else (lambda c: args.overwrite or c in row.blanks)
+        wanted = {c: f for c, f in fields.items() if asked(c)}
+        conferral_cols = [c for c in columns[row.sheet] if ip and c and CONFERRALS.search(c) and asked(c)]
         log.info("=== [%d/%d] %s | %s | %s | %d field(s) | elapsed %.1f min%s", i, len(rows), row.sheet,
                  row.university, row.program or "-", len(wanted) + len(conferral_cols), elapsed, eta)
         if unmapped:
@@ -285,12 +305,13 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             cells.append((row.sheet, row.row, "Website Link", row.start_url,
                           f"field-pipeline: found by web search in an earlier run, please check it is the right program",
                           row.start_url, "FFF2CC"))
+        name = program_name(row.program, row.sheet)  # what to search for: abbreviations spelled out
         begun = False
         if not row.start_url and not args.no_find_links and not args.no_search and not stopped:
             fetcher.begin_school()
             begun = True
             try:
-                row.start_url = discoverer.find_start(row.university, row.program or row.sheet) or ""
+                row.start_url = discoverer.find_start(row.university, name) or ""
             except BrowserUnavailable as exc:
                 log.error("STOPPING: %s. Finished schools are saved; rerun later to continue from here.", exc)
                 stopped = True
@@ -298,29 +319,34 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
                 cells.append((row.sheet, row.row, "Website Link", row.start_url,
                               f"field-pipeline {today}: found by web search, please check it is the right program",
                               row.start_url, "FFF2CC"))
-        if not row.start_url:
-            log.warning("no Website Link -> no web research for this row")
-        missing = "not-found" if row.start_url else "no-start-link"
+        # Without a program page, research still runs on the university's own site: searches and crawl only need
+        # its domain. Not-published is then never concluded (mark_not_published needs the program page).
+        anchor = row.start_url
+        if not anchor and ip and not args.no_find_links and (anchor := ip.homepage(row.university) or ""):
+            log.info("no Website Link: researching from the university's site %s (IPEDS directory)", anchor)
+        if not anchor:
+            log.warning("no Website Link and no university site -> no web research for this row")
+        missing = "not-found" if anchor else "no-start-link"
 
         groups = sorted({f.group for f in wanted.values()})
         usnews = usnews_kind(row.sheet, row.program)
-        stored = {} if args.reextract else store.results(row.key)
-        todo = [] if stopped or not row.start_url else [g for g in groups if any(c not in stored for c, f in wanted.items() if f.group == g)]
+        stored = {} if args.reextract else {c: r for c, r in store.results(row.key).items() if c not in redo}
+        todo = [] if stopped or not anchor else [g for g in groups if any(c not in stored for c, f in wanted.items() if f.group == g)]
         results = {c: r for c, r in stored.items() if c in wanted}
         if todo:
             if not begun:
                 fetcher.begin_school()
             try:
-                pages = discoverer.run(row.key, row.start_url, row.program or row.sheet, todo, row.university,
-                                       row.sheet, usnews)
+                pages = discoverer.run(row.key, anchor, name, todo, row.university, row.sheet, usnews,
+                                       homepage=not row.start_url)
             except BrowserUnavailable as exc:
                 hint = (" -- Browser Use returned 402 Payment Required: the account is out of credits"
                         if "402" in str(exc) else "")
                 log.error("STOPPING: %s%s. Finished schools are saved; rerun later to continue from here.", exc, hint)
                 stopped = True
-                results = {c: r for c, r in store.results(row.key).items() if c in wanted}
+                results = {c: r for c, r in store.results(row.key).items() if c in wanted and c not in redo}
             else:
-                words = program_words(row.program or row.sheet)
+                words = program_words(name)
                 dropped = [p["url"] for p in pages if foreign_program(p["url"], words, row.start_url)]
                 pages = [p for p in pages if p["url"] not in dropped]
                 if dropped:
@@ -346,7 +372,7 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
                             if r["status"] != "llm-error" and (found[c]["status"] == "llm-error" or better(r, found[c])):
                                 r["detail"] = (r.get("detail") or "") + " [second pass]"
                                 found[c] = r
-                earlier = store.results(row.key)
+                earlier = {c: r for c, r in store.results(row.key).items() if c not in redo}  # a flagged value is stale
                 for c, r in found.items():
                     # a value that passed every check in an earlier run is kept unless this run found a better one
                     if (e := earlier.get(c)) and e["status"] in FILLED and r["status"] != e["status"] and better(e, r):
@@ -397,6 +423,9 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
                         + f"{r.get('url') or ''}\n"
                         + (f"\"{r['quote']}\"" if r.get("quote") else r.get("detail") or ""))
                 cells.append((row.sheet, row.row, c, r["value"], note, r.get("url"), fill_for(r)))
+            elif r["status"] == "not-published":
+                cells.append((row.sheet, row.row, c, NOT_PUBLISHED, f"not-published | field-pipeline {today}\n{r['detail']}",
+                              None, FILL["not-published"]))
             else:
                 note = f"{r['status']}" + (f": {r['detail']}" if r.get("detail") else "") + \
                        (f"\nbest candidate: {r['value']}\n{r.get('url') or ''}\n\"{r.get('quote') or ''}\""
@@ -404,7 +433,8 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
                 cells.append((row.sheet, row.row, c, None, f"field-pipeline {today}: {note}", None))
         for link_col, pair in links.items():
             r = results.get(pair, {})
-            if (args.overwrite or link_col in row.blanks) and r.get("status") in ("found", "found-prior") and r.get("url"):
+            if (pair in redo or (recheck is None and (args.overwrite or link_col in row.blanks))) \
+                    and r.get("status") in ("found", "found-prior") and r.get("url"):
                 cells.append((row.sheet, row.row, link_col, r["url"], f"page where '{pair}' was found", r["url"]))
 
     dest = out_dir / f"{src.stem}_field_pipeline{src.suffix}"
@@ -417,10 +447,13 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             w.writerow([row.sheet, row.row, row.university, row.program, c, r.get("status"), r.get("cycle"),
                         r.get("value"), r.get("url"), r.get("quote"), r.get("detail")])
     total = sum(tally.values())
+    findable = total - tally["not-published"]  # cells the program publishes at all
     log.info("DONE: %d cells written -> %s | %.1f min for %d row(s)", written, dest, (time.time() - started) / 60,
              len(rows))
-    log.info("status counts: %s | fill rate %.0f%% (2026-2027 only: %.0f%%)", dict(tally),
-             100 * sum(tally[s] for s in FILLED) / total if total else 0,
+    filled = sum(tally[s] for s in FILLED)
+    log.info("status counts: %s | fill rate %.0f%% of all cells, %.0f%% of cells not marked not-published "
+             "(2026-2027 only: %.0f%%)", dict(tally), 100 * filled / total if total else 0,
+             100 * filled / findable if findable else 0,
              100 * (tally["found"] + tally["computed"]) / total if total else 0)
     log.info("browser pages: %d ok, %d failed | cloud sessions: %d | searches: %s, disabled: %s", fetcher.browser_ok,
              fetcher.browser_fail, fetcher.sessions, discoverer.searcher.stats, sorted(discoverer.searcher.disabled) or "none")

@@ -192,6 +192,12 @@ class Ipeds:
                 return scored[0][1]
         return None
 
+    def homepage(self, university: str) -> str | None:
+        """The university's web address from the IPEDS directory (for rows without a Website Link)."""
+        unitid = self.match(university)
+        web = self.schools[unitid][2].strip() if unitid else ""
+        return (web if "//" in web else f"https://{web}") if web else None
+
     def _awarded(self, unitid: str, cips: tuple[str, ...]) -> bool:
         return any(r[0].startswith(cips) and r[1] for y in self.years for r in self.data[y].get(unitid, []))
 

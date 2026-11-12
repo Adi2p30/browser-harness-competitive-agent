@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Source health{% endblock %}
+{% block content %}
+<h1>Source health</h1>
+<p>Each month the checker re-opens every source page behind the knowledge base and looks for the quote each value
+  came from. <strong>Changed</strong>: a near copy is still on the page but its words or numbers differ, so the value
+  has probably been updated. <strong>Missing</strong>: the page no longer has the quote. <strong>Dead</strong>: the
+  page is gone. <strong>Unreadable</strong>: the page couldn't be read this time, which says nothing about the value.</p>
+
+{% if not xlsx %}
+<p class="warn">No <code>EDIT Competitive Analysis Research*.xlsx</code> workbook found in the repo root.</p>
+{% else %}
+<form method="post" action="{{ url_for('health_start') }}" class="run-form">
+  <fieldset>
+    <legend>Run a source check now</legend>
+    <label>Browser
+      <select name="browser">
+        <option value="local" selected>local Chrome (free)</option>
+        <option value="cloud">Browser Use Cloud (billed)</option>
+        <option value="auto">auto (cloud if key set, else local)</option>
+        <option value="none">none (HTTP only)</option>
+      </select>
+    </label>
+    <label class="checkbox"><input type="checkbox" name="links"> also check last year's workbook links (page still opens)</label>
+    <label class="checkbox"><input type="checkbox" name="all"> recheck pages checked in the last 25 days too</label>
+  </fieldset>
+  {% if running %}
+  <p class="hint">A run is going. Start the source check once it finishes: both write the same page cache.</p>
+  {% else %}
+  <button type="submit" class="gold">Start source check</button>
+  {% endif %}
+</form>
+{% endif %}
+
+{% if checks %}
+<h2>Check {{ chosen.name }}</h2>
+{% if checks|length > 1 %}
+<form method="get" action="{{ url_for('health_index') }}" class="inline">
+  <select name="check" onchange="this.form.submit()">
+    {% for d in checks %}<option value="{{ d.name }}" {% if d == chosen %}selected{% endif %}>{{ d.name }}</option>{% endfor %}
+  </select>
+</form>
+{% endif %}
+<p>{{ rows|length }} value(s) checked:
+  {% for result, n in counts.most_common() %}<span class="status health-{{ result }}">{{ result }} {{ n }}</span> {% endfor %}
+</p>
+
+{% if recheck %}
+<form method="post" action="{{ url_for('health_recheck') }}" class="run-form">
+  <input type="hidden" name="check" value="{{ chosen.name }}">
+  <p>{{ recheck }} cell(s) are changed, missing or dead. Researching them again runs the pipeline on only those cells
+    (RCAC calls, about a minute per school).</p>
+  {% if rcac_warning %}<p class="warn">{{ rcac_warning }}</p>{% endif %}
+  <label>Browser
+    <select name="browser">
+      <option value="local" selected>local Chrome (free)</option>
+      <option value="cloud">Browser Use Cloud (billed)</option>
+      <option value="auto">auto</option>
+    </select>
+  </label>
+  <button type="submit" class="gold" {% if rcac_warning %}disabled{% endif %}>Re-research flagged cells</button>
+</form>
+{% endif %}
+
+{% if flagged %}
+<div class="table-scroll">
+<table class="decisions">
+  <thead><tr><th>Result</th><th>University</th><th>Sheet</th><th>Field</th><th>Value</th><th>Stored quote</th>
+    <th>Page now says</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for r in flagged %}
+    <tr class="health-row-{{ r.result }}">
+      <td><span class="status health-{{ r.result }}">{{ r.result }}</span></td>
+      <td>{{ r.university }}</td><td>{{ r.sheet }}</td><td>{{ r.field }}</td><td>{{ r.value }}</td>
+      <td>{{ r.quote }} <a href="{{ r.url }}" target="_blank" rel="noopener">source</a></td>
+      <td>{{ r.snippet }}</td><td>{{ r.detail }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="notice">Every checked source still has its quote.</p>
+{% endif %}
+{% else %}
+<p class="notice">No source check yet.</p>
+{% endif %}
+<p class="hint">Monthly schedule: <code>python -m field_pipeline.health "&lt;workbook&gt;" --install-schedule</code>
+  (see agent-workspace/field_pipeline/README.md).</p>
+{% endblock %}

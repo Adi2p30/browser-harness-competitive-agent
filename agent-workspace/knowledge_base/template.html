@@ -8,21 +8,21 @@
 :root {
   --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd; --soft: #f0efea;
   --accent: #8e6f3e; --accent-ink: #ffffff; --purdue: #fbf3e0; --purdue-line: #cfb991;
-  --prior: #fff4cc; --prior-ink: #7a5b00; --entered: #e8eefc; --entered-ink: #2f4a8a;
+  --prior: #fff4cc; --prior-ink: #7a5b00; --entered: #e8eefc; --entered-ink: #2f4a8a; --stale: #fde2e1; --stale-ink: #9b1c1c;
   --good: #2e7d4f; --bad: #b4452f;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #a09f98; --line: #34332f; --soft: #2a2925;
     --accent: #cfb991; --accent-ink: #1d1d1b; --purdue: #2d2719; --purdue-line: #7d6a45;
-    --prior: #3a3214; --prior-ink: #f0d27a; --entered: #1f2a44; --entered-ink: #a9c0f5;
+    --prior: #3a3214; --prior-ink: #f0d27a; --entered: #1f2a44; --entered-ink: #a9c0f5; --stale: #4a1f1f; --stale-ink: #f5a9a9;
     --good: #6cc492; --bad: #f08a72;
   }
 }
 :root[data-theme="dark"] {
   --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #a09f98; --line: #34332f; --soft: #2a2925;
   --accent: #cfb991; --accent-ink: #1d1d1b; --purdue: #2d2719; --purdue-line: #7d6a45;
-  --prior: #3a3214; --prior-ink: #f0d27a; --entered: #1f2a44; --entered-ink: #a9c0f5;
+  --prior: #3a3214; --prior-ink: #f0d27a; --entered: #1f2a44; --entered-ink: #a9c0f5; --stale: #4a1f1f; --stale-ink: #f5a9a9;
   --good: #6cc492; --bad: #f08a72;
 }
 * { box-sizing: border-box; }
@@ -83,6 +83,7 @@ td .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin
 .tag.prior { background: var(--prior); color: var(--prior-ink); }
 .tag.entered { background: var(--entered); color: var(--entered-ink); }
 .tag.ipeds { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
+.tag.stale { background: var(--stale); color: var(--stale-ink); }
 .delta.up { color: var(--bad); } .delta.down { color: var(--good); }
 .delta.neutral { color: var(--muted); }
 td.empty { color: var(--muted); }
@@ -108,6 +109,7 @@ td.empty { color: var(--muted); }
     <span><i class="sw" style="background:var(--prior)"></i>Earlier cycle (2025-26 or older)</span>
     <span><span class="tag ipeds">IPEDS</span> Federal degree data; "graduates" = share of graduates, not the entering class</span>
     <span><span class="tag ipeds">school-wide</span> No program figure published; the school's / university's graduate figure</span>
+    <span><span class="tag stale">source changed</span> The monthly source check no longer finds the quote on the page (changed / gone / page dead)</span>
     <span>Hover a value for the quote it came from &middot; ↗ opens the source</span>
   </div>
 </header>
@@ -262,14 +264,20 @@ function renderGrid() {
         : x.s === "ipeds-proxy" ? `<span class="tag ipeds">IPEDS graduates</span>`
         : x.s === "ipeds" ? `<span class="tag ipeds">IPEDS 3-yr avg</span>`
         : x.s === "entered" ? `<span class="tag entered">workbook</span>`
+        : x.s === "reviewed" ? `<span class="tag entered">reviewed</span>`
         : x.c && x.c !== CURRENT ? `<span class="tag prior">${esc(x.c.replace(/^(\d{4})-\d{2}(\d{2})$/, "$1-$2"))}</span>` : "";
-      const tip = x.q ? `“${x.q}”` : x.d || (x.s === "prior-year" ? "From last year's workbook" : "");
+      const stale = HEALTH[x.h];
+      const tip = (x.q ? `“${x.q}”` + (x.s === "reviewed" ? `\n${x.d}` : "") : x.d || (x.s === "prior-year" ? "From last year's workbook" : ""))
+        + (stale ? `\n\nSource check ${x.ht}: ${stale}` + (x.hn ? `. The page now says: “${x.hn}”` : "") : "");
       return `<td class="${cls}"><div class="v" title="${esc(tip)}">${esc(x.v)}</div>
-        <div class="meta">${tag}${deltaHtml(x, base, f.kind)}${x.u ? `<a class="src" href="${esc(x.u)}" target="_blank" rel="noopener" title="${esc(x.u)}">↗</a>` : ""}</div></td>`;
+        <div class="meta">${tag}${stale ? `<span class="tag stale" title="${esc(tip)}">source ${x.h}</span>` : ""}${deltaHtml(x, base, f.kind)}${x.u ? `<a class="src" href="${esc(x.u)}" target="_blank" rel="noopener" title="${esc(x.u)}">↗</a>` : ""}</div></td>`;
     }).join("") + `</tr>`;
   }
   $("gridwrap").innerHTML = html + `</tbody></table>`;
 }
+
+const HEALTH = { changed: "the quote changed on the page", missing: "the quote is no longer on the page",
+                 dead: "the page is gone" };
 
 function save() {
   try { history.replaceState(null, "", "#" + encodeURIComponent(JSON.stringify(state))); } catch (e) {}

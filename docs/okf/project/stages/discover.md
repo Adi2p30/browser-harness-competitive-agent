@@ -10,4 +10,6 @@ status: stable
 # Discover
 
 `Discoverer.find_start` (no stored Website Link) then `Discoverer.run`: candidate pages per
-field group, ranked by link text and URL shape. Logger `field_pipeline.discover`.
+field group, ranked by link text and URL shape. With no program page at all, `run` starts from the university's
+home page (IPEDS `WEBADDR`, `Ipeds.homepage`), which only scopes search and crawl to its domain. Logger
+`field_pipeline.discover`.

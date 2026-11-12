@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
                          "Chrome/131.0 Safari/537.36 (competitive-analysis research; Purdue)"}
 MIN_TEXT = 200
+OCR_MARK = "[ocr]"  # line before OCR'd image text in a page: health treats a quote from it as unverifiable
 MAX_PDF_PAGES = 40
 SKIP_EXT = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".zip", ".mp4", ".mp3", ".mov",
             ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".ics")
@@ -399,7 +400,7 @@ class Fetcher:
             text = " ".join(text.split())
             if re.search(r"\d", text):
                 out.append(f"[image text{f' ({alt})' if alt else ''}: {text}]")
-        return "\n".join(out)
+        return (OCR_MARK + "\n" + "\n".join(out)) if out else ""
 
     def _via_http(self, url: str, html_ok: bool) -> dict | None:
         try:

@@ -3,13 +3,14 @@ import logging
 import re
 
 from . import llm
-from .fields import GROUPS, USNEWS_LABEL, USNEWS_PROFILE, USNEWS_STATS_GROUPS, Field, usnews_program_level
+from .fields import GROUPS, USNEWS_LABEL, USNEWS_PROFILE, USNEWS_STATS_GROUPS, Field, usnews_program_level, visible
 from .retrieve import Chunk, top_chunks
 from .validate import check
 
 log = logging.getLogger(__name__)
 USNEWS_PAGE = re.compile("|".join(dict.fromkeys(USNEWS_PROFILE.values())))  # U.S. News profile pages
-PINNED = 3  # best excerpts of the U.S. News profile always shown to the model (first pass)
+MAX_PER_URL_RETRY = 4  # second pass: chunks per page (the first pass allows 3), so one long page cannot fill the call
+PINNED = 3  # best excerpts of the U.S. News profile always shown to the class-stat and U.S. News calls (first pass)
 
 PROMPT = """You fill a competitive-analysis spreadsheet for graduate business programs.
 University: {university}
@@ -32,8 +33,10 @@ Rules:
 - quote: copy the exact words from the excerpt (a sentence or table row, max 300 characters). To combine
   several rows, join exact copies with " ... ". The value's numbers
   must appear in the quote.
-- applies_to: "target" = stated for the target program; "school-wide" = a school/university-wide fact that covers
-  it (e.g. a graduate tuition table, career center); "other" = a different program, degree or level.
+- applies_to: "target" = stated for the target program; "school-wide" = a school/university-wide or business-school-
+  wide fact that covers it (e.g. a graduate tuition table, career center, the business school's employment report or
+  class figures for all its master's / MBA students); "other" = a different named program, degree or level (another
+  MS, an undergraduate figure). Never call a business-school-wide figure "other".
 - Prefer 2026-2027 / Fall 2026 values. If an excerpt only gives an earlier year (2025-2026, Fall 2025 class,
   2024-2025), return that value as a candidate with a quote that includes its year (the code labels it as an
   earlier year), but never present it as 2026-2027. Give several candidates when excerpts state different years.
@@ -69,20 +72,24 @@ def candidates(item) -> list[dict]:
 
 
 def extract_group(university: str, program: str, today: str, group: str, fields: dict[str, Field],
-                  chunks: list[Chunk], k: int = 10, skip: int = 0,
+                  chunks: list[Chunk], k: int = 18, skip: int = 0,
                   page_text: dict[str, str] | None = None, usnews: str = "") -> dict[str, dict]:
     """{column: {value, status, url, quote, detail, cycle}} for every column in `fields`, from the group's best `k`
     chunks after skipping the first `skip` (the second pass looks at the next-best chunks). `usnews` is the row's
     U.S. News profile kind (fields.usnews_kind): figures from that profile count as program-level class stats."""
     g = GROUPS[group]
+    chunks = [c for c in chunks if visible(group, c.url)]  # ranking-site text stays in its own call
     query = f"{g.query} {program} " + " ".join(fields) + (f" {university}" if g.sites else "")
-    best = top_chunks(chunks, query, k=k, boost=g.boost)
-    if skip:  # second pass: the next-best chunks, never one the first pass already showed
-        seen = {c.id for c in top_chunks(chunks, query, k=skip, boost=g.boost)}
-        best = [c for c in top_chunks(chunks, query, k=skip + k, boost=g.boost, max_per_url=6) if c.id not in seen][:k]
-    else:  # the U.S. News profile is always consulted, even when other pages rank higher
-        pinned = top_chunks([c for c in chunks if USNEWS_PAGE.search(c.url)], query, k=PINNED, max_per_url=PINNED)
-        best = pinned + [c for c in best if c not in pinned][:max(k - len(pinned), 0)]
+    n = skip or k  # chunks the first pass shows
+    first = top_chunks(chunks, query, k=n, boost=g.boost)
+    # the U.S. News profile is always consulted where visible, even when other pages rank higher
+    pinned = top_chunks([c for c in chunks if USNEWS_PAGE.search(c.url)], query, k=PINNED, max_per_url=PINNED)
+    first = pinned + [c for c in first if c not in pinned][:max(n - len(pinned), 0)]
+    best = first
+    if skip:  # second pass: the next-best chunks, never one the first pass showed (pinned ones included)
+        seen = {c.id for c in first}
+        best = [c for c in top_chunks(chunks, query, k=len(chunks), boost=g.boost, max_per_url=MAX_PER_URL_RETRY)
+                if c.id not in seen][:k]
     if not best:
         return {c: {"value": None, "status": "not-found", "detail": "no relevant text on fetched pages"} for c in fields}
     excerpts = "\n\n".join(f"[{c.id}] {c.url} ({c.title})\n{c.text}" for c in best)
@@ -117,11 +124,11 @@ def judge(field: Field, group: str, item: dict, best: list[Chunk], by_id: dict, 
             note = USNEWS_LABEL[usnews]
             if applies == "school-wide" and usnews_program_level(usnews, c.url):
                 applies = "target"
-            elif not usnews_program_level(usnews, c.url) and applies == "target":
-                applies = "school-wide"  # business-school / online-business figures are not this program's
+            elif not usnews_program_level(usnews, c.url) and applies in ("target", "other"):
+                applies = "school-wide"  # business-school / online-business figures: the labelled fallback
         elif usnews and group in USNEWS_STATS_GROUPS and re.search(USNEWS_PROFILE["business-school"], c.url or ""):
             note = USNEWS_LABEL["business-school"]  # online rows also read the business-school profile
-            if applies == "target":
+            if applies in ("target", "other"):
                 applies = "school-wide"
         status, detail = check(field, value, quote, full(c), applies, f"{c.url} {c.title}")
         return status, detail, note

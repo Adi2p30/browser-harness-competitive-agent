@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import requests
 
 from .fetch import HEADERS, SKIP_EXT, Fetcher, clean_url, is_same_site, site
-from .fields import GROUPS, USNEWS_PROFILE, USNEWS_STATS_GROUPS
+from .fields import GROUPS, USNEWS_PROFILE, USNEWS_STATS_GROUPS, visible
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -27,7 +27,17 @@ def tokens(text: str) -> set[str]:
 
 
 PROGRAM_SEGMENT = re.compile(r"/(programs?|degrees?|majors?|masters?|graduate-programs|academics)/", re.I)
-GENERIC_WORDS = {"online", "master", "masters", "science", "program", "degree", "off", "campus", "mba", "residential"}
+GENERIC_WORDS = {"online", "master", "masters", "science", "program", "degree", "off", "campus", "mba", "residential",
+                 "major"}
+# program words too common to tell programs apart ('management' is in half a business school's program names)
+WEAK_WORDS = {"manag", "busin", "admin", "studi", "appli", "gradu", "profe", "scien", "educa"}
+# another professional school of the university: its own subdomain (kentlaw.iit.edu, law.gwu.edu) or first path segment
+OTHER_SCHOOL_HOST = re.compile(r"^(www\.)?([a-z]*law|med|medicine|nursing|dental|dentistry|pharmacy|vetmed|divinity)\.", re.I)
+OTHER_SCHOOL_PATH = re.compile(r"^(law|law-school|school-of-law|medicine|nursing|dentistry|pharmacy|divinity)$", re.I)
+# a path that names a degree (another program, not a resource page): 'ms-in-sport-management', 'certificate/...'
+DEGREE = re.compile(r"(^|[/_-])(ms|ma|msc|mba|mpa|mfa|bs|ba|bba|phd|dba|jd|llm|masters?|doctoral|doctorate|"
+                    r"certificates?|minor|bachelors?)([/_.-]|$)", re.I)
+QS_PROFILE = re.compile(r"https://www\.topuniversities\.com/universities/([a-z0-9-]+)/?$")
 NAME_STOP = {"the", "of", "at", "and", "in", "main", "campus"}
 USNEWS_ONLINE = re.compile(r"https://www\.usnews\.com/education/online-education/([a-z0-9-]+?)-([A-Z]*\d+)(?=/|$|\?|#)")
 USNEWS_BSCHOOL = re.compile(r"https://www\.usnews\.com/best-graduate-schools/top-business-schools/([a-z0-9-]+)-(\d+)(?=/|$|\?|#)")
@@ -56,21 +66,54 @@ def program_words(program: str) -> set[str]:
     return {w[:5] for w in tokens(program) - GENERIC_WORDS if len(w) >= 4}
 
 
+# Sheet-name abbreviations spelled out, so a row without a Program Name still has words to search and match on.
+ABBREV = {"hrm": "human resource management", "msgscm": "global supply chain management",
+          "gscm": "global supply chain management", "baim": "business analytics information management"}
+
+
+def program_name(program: str, sheet: str) -> str:
+    """The row's Program Name, else its sheet's category with abbreviations spelled out ('MS HRM - Residential' ->
+    'MS human resource management')."""
+    return program or re.sub(r"[a-z]+", lambda m: ABBREV.get(m.group().casefold(), m.group()),
+                             category(sheet, sheet), flags=re.I)
+
+
+def other_school(url: str, start: str = "") -> bool:
+    """A page of another professional school (law, medicine, ...) of the university, unless the start link is on it."""
+    first = lambda u: (urlparse(u).path.strip("/").split("/") or [""])[0]
+    host, shost = urlparse(url).netloc.lower(), urlparse(start).netloc.lower()
+    return bool((OTHER_SCHOOL_HOST.match(host) and host != shost)
+                or (OTHER_SCHOOL_PATH.match(first(url)) and not (host == shost and first(url) == first(start))))
+
+
+def names_program(text: str, words: set[str]) -> bool:
+    """`text` (a URL slug, squashed) names the program: every distinctive word for a one- or two-word name, all but
+    one for longer names. Common words ('management', 'business') only count when the name has nothing else."""
+    strong = words - WEAK_WORDS or words
+    hits = sum(w in text for w in strong)
+    return hits >= (len(strong) if len(strong) <= 2 else len(strong) - 1)
+
+
 def foreign_program(url: str, words: set[str], start: str = "") -> bool:
-    """True for a page under a program path (/program/<slug>, /degrees/...) that never names the target program.
-    The start link and pages on its own path (its parents and children) always belong to the program."""
-    if not words:
-        return False
+    """True for a page of another program: under a program path (/program/<slug>, /degrees/...) that does not name
+    the target program, or on another professional school's site/section. A path naming a degree
+    ('masters/ms-in-sport-management') must name the whole program (names_program); other pages under a program
+    path (funding, study-abroad resources) only need one of its words. The start link and pages on its own path
+    (its parents and children) always belong to the program."""
     parsed = urlparse(url)
-    if start:
+    if urlparse(start).path.strip("/"):  # a program page (not just the university's home page)
         a, b = parsed.netloc + parsed.path.rstrip("/"), urlparse(start).netloc + urlparse(start).path.rstrip("/")
         if a.startswith(b) or (b.startswith(a) and len(parsed.path.strip("/")) > 0):
             return False
+    if other_school(url, start):
+        return True
     m = PROGRAM_SEGMENT.search(parsed.path)
-    if not m:
+    if not words or not m:
         return False
-    rest = (parsed.netloc + parsed.path[m.end():]).casefold().replace("-", "").replace("_", "")
-    return bool(parsed.path[m.end():].strip("/")) and not any(w in rest for w in words)
+    tail = parsed.path[m.end():]
+    rest = (parsed.netloc + tail).casefold().replace("-", "").replace("_", "")
+    named = names_program(rest, words) if DEGREE.search(tail) else any(w in rest for w in words)
+    return bool(tail.strip("/")) and not named
 
 
 # First path segments that are university-wide offices (fine to visit from any program); any other first segment
@@ -82,9 +125,9 @@ SHARED_SECTIONS = re.compile(r"^(admissions?|graduate|grad|financial|finaid|fina
 
 def section_bonus(url: str, start: str) -> int:
     u, s = urlparse(url), urlparse(start)
-    if u.netloc != s.netloc:
-        return 0
     first = lambda p: (p.path.strip("/").split("/") or [""])[0]
+    if u.netloc != s.netloc or not first(s):  # a home-page start names no section
+        return 0
     if first(u) == first(s):
         return 3
     return 0 if not first(u) or SHARED_SECTIONS.match(first(u)) else -6
@@ -226,6 +269,22 @@ class Discoverer:
                     return url
         return None
 
+    def qs_profile(self, university: str, hits: list[str]) -> str | None:
+        """The university's QS page (topuniversities.com/universities/<slug>), which states its QS World University
+        Rank ('# =16QS World University Rankings'). QS search and list pages render their table by script and hold
+        no ranks, so they are only read for their links to that page; else the slug is guessed from the name."""
+        for u in hits:
+            if m := QS_PROFILE.match(clean_url(u).split("?")[0]):
+                if same_school(m.group(1), university):
+                    return clean_url(u).split("?")[0]
+        for u in [h for h in hits if "topuniversities.com" in h and "?" in h][:2]:
+            for _, link in self.get(u).get("links") or []:
+                m = QS_PROFILE.match(link.split("?")[0])
+                if m and same_school(m.group(1), university):
+                    return link.split("?")[0]
+        url = f"https://www.topuniversities.com/universities/{slug(university.split(' - ')[0])}"
+        return url if self.get(url).get("status") == "ok" else None
+
     def ranking_lists(self, sheet: str, program: str, group: str) -> list[str]:
         """Publisher pages ranking the sheet's program category (searched once per sheet; the school is looked up
         in them by retrieval)."""
@@ -241,7 +300,8 @@ class Discoverer:
     def find_start(self, university: str, program: str) -> str | None:
         """Program page for a row without a Website Link: the best .edu search hit naming the program and school.
         Bing first; DuckDuckGo when Bing finds nothing usable (or is switched off after a challenge page)."""
-        words, uni = program_words(program), tokens(university) - NAME_STOP - {"university", "college"}
+        uni = tokens(university) - NAME_STOP - {"university", "college"}
+        words = program_words(program) or (tokens(program) - GENERIC_WORDS) | ({"mba"} & tokens(program))
         best, engine = None, ""
         for engine, search in (("bing", self.searcher.bing), ("ddg", self.searcher.ddg)):
             best_s = 0
@@ -269,7 +329,9 @@ class Discoverer:
         return page
 
     def run(self, row_key: str, start: str, program: str, groups: list[str], university: str = "",
-            sheet: str = "", usnews: str = "") -> list[dict]:
+            sheet: str = "", usnews: str = "", homepage: bool = False) -> list[dict]:
+        """`start` is the program page, or with `homepage` only the university's home page: it then just scopes
+        search and crawl to the university's site (and is not remembered as the row's Website Link)."""
         words = program_words(program)
         pool: dict[str, str] = {}  # url -> anchor text
         done: set[str] = set()
@@ -289,7 +351,7 @@ class Discoverer:
                 for a, link in page.get("links") or []:
                     add(link, a)
 
-        open_page(clean_url(start), "*", 100, "start")
+        open_page(clean_url(start), "*", 100, "homepage" if homepage else "start")
         host = urlparse(start).netloc
         if host not in self._sitemaps:
             self._sitemaps[host] = sitemap_urls(start)
@@ -308,15 +370,18 @@ class Discoverer:
                 for rank, (src, title, url) in enumerate(kept):
                     if not g.sites:
                         add(url, title)
-                    if rank < self.search_hits:
+                    if rank < self.search_hits and not ("topuniversities.com" in url and "?" in url):
                         open_page(url, group, 50 - rank, f"search:{src}", follow=not g.sites)
+                if "topuniversities.com" in g.sites and (url := self.qs_profile(university, [u for _, _, u in kept])):
+                    open_page(url, group, 55, "qs-profile", follow=False)
 
         # Always: the U.S. News business-school profile (every row, whatever else was found), plus the online
-        # profile for online rows. It is offered to every field group; extract.py always shows its best excerpts.
-        if usnews:
+        # profile for online rows. It is offered to the class-stat and U.S. News groups (fields.visible); extract.py
+        # always shows its best excerpts there.
+        if usnews and any(g in USNEWS_STATS_GROUPS or "usnews.com" in GROUPS[g].sites for g in groups):
             for kind in dict.fromkeys(["business-school", usnews if usnews.startswith("online") else "business-school"]):
                 if url := self.usnews_profile(university, kind, sorted(done)):
-                    for group in groups:
+                    for group in [g for g in groups if visible(g, url)]:
                         open_page(url, group, 60, "usnews-profile", follow=False)
         if self.use_search and sheet:
             for group in [g for g in groups if GROUPS[g].sites]:

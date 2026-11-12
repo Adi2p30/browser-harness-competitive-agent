@@ -6,6 +6,7 @@ Column names differ across sheets ("Female (%)", "Female %"), so columns are mat
 """
 import re
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,17 @@ USNEWS_LABEL = {"online-mba": "U.S. News online MBA profile",
                 "business-school": "U.S. News business school profile: school-level figures (all MBA / specialty "
                                    "master's students); its GMAT, GPA and GRE are behind the paid Compass"}
 USNEWS_STATS_GROUPS = ("scores", "class", "outcomes")
+OUTSIDE = tuple(dict.fromkeys(d for g in GROUPS.values() for d in g.sites))  # ranking publishers' domains
+
+
+def visible(group: str, url: str) -> bool:
+    """Whether a page's chunks may be shown to `group`. A ranking publisher's pages (long, and they mention every topic)
+    feed only that publisher's ranking call; U.S. News program profiles also feed the class-stat groups. The school's
+    own pages feed every group."""
+    host = urlparse(url).netloc.lower()
+    d = next((d for d in OUTSIDE if host == d or host.endswith("." + d)), None)
+    return d is None or d in GROUPS[group].sites or (
+        group in USNEWS_STATS_GROUPS and any(re.search(p, url) for p in USNEWS_PROFILE.values()))
 
 
 def usnews_kind(sheet: str, program: str) -> str:

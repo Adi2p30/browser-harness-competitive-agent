@@ -15,3 +15,5 @@ own module docstring):
 6. [validate](/okf/project/stages/validate.md)
 7. [ipeds](/okf/project/stages/ipeds.md) (federal data, no browser/LLM, fills a few fields only)
 8. [write](/okf/project/stages/write.md)
+
+Monthly, apart from runs: [health](/okf/project/stages/health.md) re-checks every stored quote against its live source page.

@@ -1,13 +1,29 @@
 {% extends "base.html" %}
 {% block title %}{{ title }}{% endblock %}
+{% block body_class %}page-knowledge{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('knowledge_index') }}">&larr; Knowledge</a></p>
+<p class="crumb"><a href="{{ url_for('knowledge_index') }}">&larr; Knowledge</a></p>
 <h1>{{ title }}
   {% if frontmatter.status %}<span class="status {{ frontmatter.status }}">{{ frontmatter.status }}</span>{% endif %}
 </h1>
-{% if frontmatter.generated %}
-<p class="updated">Last updated {{ frontmatter.generated.at }}{% if frontmatter.stale_after %} &middot; stale after {{ frontmatter.stale_after }}{% endif %}</p>
+{% if frontmatter.description or updated %}
+<p class="updated">
+  {% if frontmatter.description %}{{ frontmatter.description }}{% endif %}
+  {% if updated %}{% if frontmatter.description %} &middot; {% endif %}Updated {{ updated }}{% endif %}
+  {% if stale_after %} &middot; stale after {{ stale_after }}{% endif %}
+</p>
 {% endif %}
 
+{% if 'okf-table' in body_html %}
+<div class="zoom-bar" role="group" aria-label="Table zoom">
+  <span>Table zoom</span>
+  <button type="button" data-zoom="out" aria-label="Zoom out" title="Zoom out (-)">&minus;</button>
+  <output aria-live="polite">100%</output>
+  <button type="button" data-zoom="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+  <button type="button" data-zoom="reset" title="Reset (0)">Reset</button>
+  <span class="keys hint">or press &minus; / + / 0</span>
+</div>
+{% endif %}
 <div class="okf-body">{{ body_html | safe }}</div>
+<script src="{{ url_for('static', filename='knowledge.js') }}"></script>
 {% endblock %}

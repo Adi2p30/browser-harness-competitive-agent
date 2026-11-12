@@ -11,5 +11,5 @@ status: stable
 
 `extract_group` (`agent-workspace/field_pipeline/extract.py`) calls the RCAC-hosted model
 (`field_pipeline/llm.py`, `RCAC_MODEL` env var, default `qwen3.8:27b`) in parallel across field
-groups (`--workers`). A second pass re-asks on the next-best chunks for fields still unresolved
+groups (`--workers`). A second pass re-asks on the next-best chunks (none the first pass showed, at most 4 per page) for fields still unresolved
 unless `--no-second-pass`. Logger `field_pipeline.extract` (LLM I/O: `field_pipeline.llm`).

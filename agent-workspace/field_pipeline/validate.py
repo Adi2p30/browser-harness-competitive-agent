@@ -39,6 +39,18 @@ def squash(s: str) -> str:
     return re.sub(r"\W+", "", s.casefold())
 
 
+def quote_pieces(quote: str) -> list[str]:
+    """The quote's parts between "..." / "\u2026", squashed (letters and digits only)."""
+    return [squash(q) for q in re.split(r"\.\.\.|\u2026", quote or "") if squash(q)]
+
+
+def quote_on_page(quote: str, page_text: str) -> bool:
+    """Every part of the quote is on the page, ignoring case, spacing and punctuation. A quote split by "..."
+    needs parts of 8+ characters, so two tiny fragments cannot match by chance. Used by validate and health."""
+    pieces, page_key = quote_pieces(quote), squash(page_text or "")
+    return bool(pieces) and all(p in page_key for p in pieces) and (len(pieces) == 1 or min(map(len, pieces)) >= 8)
+
+
 def term_ay(name: str, year: int) -> tuple[int, int]:
     return (year, year + 1) if name.casefold() in ("fall", "autumn") else (year - 1, year)
 
@@ -92,10 +104,9 @@ def check(field: Field, value: str, quote: str, page_text: str, applies_to: str 
         return "not-found", ""
     if not quote:
         return "bad-quote", "no quote"
-    page_key = squash(page_text)
-    pieces = [squash(q) for q in re.split(r"\.\.\.|\u2026", quote) if squash(q)]
-    if not pieces or any(p not in page_key for p in pieces) or (len(pieces) > 1 and min(map(len, pieces)) < 8):
+    if not quote_on_page(quote, page_text):
         return "bad-quote", "quote is not on the page"
+    pieces = quote_pieces(quote)
     if applies_to == "other":
         return "other-program", "model says the value is for a different program/level"
     group = GROUPS[field.group]

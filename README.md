@@ -35,6 +35,20 @@ Writes `<workbook>_kb/competitive_analysis.html` (open in any browser) and
 See [`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md) for
 every flag; the web app's run form covers the common ones.
 
+## Review queue
+
+Cells the pipeline couldn't fill go to a review queue, grouped by what a person needs to do (check a rejected
+value, research, confirm not ranked or not published, answer a yes/no). Work through it on the web app's
+**Review** page or in Excel; decisions override pipeline values in the knowledge base. See
+[`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md#review-queue).
+
+## Monthly source health check
+
+`python -m field_pipeline.health` re-opens every source page behind the knowledge base and flags values whose
+quote changed, disappeared or whose page is gone. `--install-schedule` runs it monthly, and the web app's
+**Source health** page shows the results with a button to research the flagged cells again. See
+[`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md#monthly-source-health-check).
+
 ## The underlying browser harness
 
 `field_pipeline` drives the browser through the vendored, general-purpose

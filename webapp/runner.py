@@ -25,9 +25,10 @@ PHASE_OF = {
     "field_pipeline.extract": "extract",
     "field_pipeline.llm": "extract",
     "field_pipeline.ipeds": "ipeds",
+    "field_pipeline.health": "health",
 }
 PHASE_LABELS = {"pipeline": "Row", "discover": "Discover", "fetch": "Fetch", "extract": "Extract",
-                "ipeds": "IPEDS", "other": "Other"}
+                "ipeds": "IPEDS", "health": "Source check", "other": "Other"}
 
 
 def _parse_line(line: str, seq: int) -> dict:
@@ -116,7 +117,8 @@ def launch(cmd: list[str], cwd: Path) -> Run:
 
 
 def start_run(xlsx: Path, agent_workspace: Path, *, sheets: list[str], only: list[str],
-              limit: int | None, overwrite: bool, fresh: bool, browser: str, db: Path | None = None) -> Run:
+              limit: int | None, overwrite: bool, fresh: bool, browser: str, db: Path | None = None,
+              recheck: Path | None = None) -> Run:
     cmd = [sys.executable, "-m", "field_pipeline", str(xlsx), "-v"]
     for s in sheets:
         cmd += ["--sheet", s]
@@ -131,6 +133,18 @@ def start_run(xlsx: Path, agent_workspace: Path, *, sheets: list[str], only: lis
     cmd += ["--browser", browser]
     if db:
         cmd += ["--db", str(db)]
+    if recheck:
+        cmd += ["--recheck", str(recheck)]
+    return launch(cmd, agent_workspace)
+
+
+def start_health(xlsx: Path, agent_workspace: Path, *, browser: str, links: bool, stale_days: int | None = None) -> Run:
+    """A source health check (field_pipeline.health): re-opens every source page and looks for each stored quote."""
+    cmd = [sys.executable, "-m", "field_pipeline.health", str(xlsx), "-v", "--browser", browser]
+    if links:
+        cmd.append("--links")
+    if stale_days is not None:
+        cmd += ["--stale-days", str(stale_days)]
     return launch(cmd, agent_workspace)
 
 

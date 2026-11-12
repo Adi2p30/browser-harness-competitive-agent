@@ -9,5 +9,6 @@ status: stable
 
 # Retrieve
 
-Top-`k` chunks per field group (`--chunks`, default 10), BM25 over the chunked pages from
-[chunking](/okf/project/stages/chunking.md).
+Top-`k` chunks per field group (`--chunks`, default 18), BM25 over the chunked pages from
+[chunking](/okf/project/stages/chunking.md). Ranking-publisher pages are visible only to their own ranking group
+(U.S. News profiles also to the class-stat groups): `fields.visible`, applied in `extract_group`.

@@ -45,7 +45,7 @@ Useful variations:
 | Ask the LLM again for schools already done | `--reextract` |
 | Also research cells that already have a value | `--overwrite` |
 | Skip the Bing search step | `--no-search` |
-| Text chunks per LLM call (default 10) | `--chunks 12` |
+| Text chunks per LLM call (default 18) | `--chunks 24` |
 | Skip the second LLM pass for missing fields | `--no-second-pass` |
 | Use a specific prior-year workbook for carried-forward values | `--prior "../OLD 2025-2026.xlsx"` |
 | Never carry values forward from last year's workbook | `--no-prior` |
@@ -98,17 +98,17 @@ Statuses in `decisions.csv`:
 | `not-required` | Average GMAT / GRE: the program says the test is not required, optional or waivable (quote checked) | yes ("Not required") |
 | `computed` | Tuition total = per-credit x credit hours (site gave no total; only when the credits quote says credits/hours) | yes |
 | `carried-forward` | Nothing passed this year; value copied from last year's workbook | yes, grey |
-| `school-wide` | Class-profile, score or outcome field with no program-specific value: the school's / university's graduate figure (passed every check; undergraduate and MBA-only figures are never used) | yes, purple |
+| `school-wide` | Class-profile, score or outcome field with no program-specific value: the school's / university's or business school's graduate figure, e.g. the business school's employment report or its U.S. News profile (MBA figures), labelled in the comment (passed every check; undergraduate figures are never used) | yes, purple |
 | `ipeds` | Average Conferrals from federal IPEDS completions data (3-year average) | yes |
 | `ipeds-proxy` | Female (%) / International (%) nothing else filled: share of the program's IPEDS *graduates*, not the entering class | yes, blue |
-| `not-published` | Class-profile, test-score or outcome field: the program's page was read, no class-profile / outcomes page failed to load, and no page states it | blank + comment |
+| `not-published` | Class-profile, test-score or outcome field: the program's page was read, no class-profile / outcomes page failed to load, and no page states it | "Not published", light grey |
 | `not-found` | No fetched page states it, and a relevant page may have been missed (start page or a profile page could not be read, or a non-profile field) | blank + comment |
 | `off-cycle` | Value is for a year older than the field allows, or a later year | blank + comment |
 | `other-program` | Value is for another program, undergrad, or school-wide where it must be program-specific | blank + comment |
 | `bad-quote` | Model's quote is not on the page (paraphrase or invention) | blank + comment |
 | `bad-source` | Ranking value not from (or naming) its publisher | blank + comment |
 | `bad-value` / `out-of-range` | Value doesn't match its quote, or is implausible (e.g. GPA 35); also a Yes/No the quote doesn't support (a "No" needs a negation, "only", "fully online", or for 3-year Indian degrees a four-year requirement; a "Yes" fails on "not offered / not STEM") and credit hours the page states in units or courses | blank + comment |
-| `no-start-link` | Row has no Website Link | blank |
+| `no-start-link` | Row has no Website Link, none was found by search, and IPEDS has no web address for the university | blank |
 
 ### Year fallbacks
 
@@ -121,7 +121,11 @@ year, everything else (class profile, outcomes, rankings, structure) two. The mo
 candidates per field and the newest one that passes wins; the second pass also retries fields that only found an
 older year. A row without a Website Link takes last year's link, else a search for a `.edu` page naming the
 program (Bing, or DuckDuckGo when Bing finds nothing or shows a challenge page; written to the workbook in yellow,
-so check it). Links found this way are reused by later runs, including `--fresh` ones.
+so check it). Links found this way are reused by later runs, including `--fresh` ones. A row without a Program Name
+searches for its sheet's category with abbreviations spelled out (`MS HRM` -> "MS human resource management",
+`discover.ABBREV`). If no program page is found, the row is still researched on the university's own site (its web
+address from the IPEDS directory): the searches and crawl only need the domain. That home page is not written as the
+Website Link, and such rows never get `not-published` (the program page was not read).
 
 ### U.S. News program profiles
 
@@ -136,8 +140,8 @@ the paid U.S. News Compass, so they cannot be read; its free figures (e.g. speci
 gender, enrollment, acceptance rate) are school-level, so for non-MBA sheets they are only used as the
 `school-wide` fallback. Every row always gets the business-school profile (e.g.
 `usnews.com/best-graduate-schools/top-business-schools/clark-university-01109`), whatever else was found, plus
-its online profile on online sheets; the profile is offered to every field group and its 3 best excerpts are
-always shown to the model. The profile is found from links on U.S. News pages already fetched for the row (the
+its online profile on online sheets; the profile is offered to the class-stat groups (scores, class, outcomes) and
+the U.S. News ranking, and its 3 best excerpts are always shown in those calls. The profile is found from links on U.S. News pages already fetched for the row (the
 graduate rankings page links it; online profiles via the school's online-education page), then Bing, then
 DuckDuckGo, so a Bing challenge page no longer loses it. `best-colleges` (undergraduate) pages are always rejected.
 
@@ -180,6 +184,112 @@ with plain HTTP if the browser still fails.
 Pages and results are cached in `agent-workspace/field_pipeline/data/pipeline.sqlite`, so a rerun only does new
 work. To start completely fresh, delete that file.
 
+## Review queue
+
+`review.py` gathers what the pipeline couldn't settle so a person can finish it. That covers every cell whose
+newest pipeline decision isn't a filled status and that nothing else fills (another run, the workbook, an
+earlier review), plus values the monthly source check flagged. Cells are grouped by what to do, most useful
+first:
+
+| Group | What it is | Quick decisions |
+|---|---|---|
+| Rejected value to check | A value was found but a check rejected it; the candidate and its quote are shown | Accept, type a value, leave blank |
+| Source changed | The source page no longer has the quote; shows what it says now | Type the new value, keep the current one, leave blank |
+| Research by hand | Not on any page the pipeline read | Type a value, leave blank |
+| Computed once credit hours are in | Tuition totals | Type a value, leave blank |
+| Yes/no not mentioned on the site | Experiential and community extras | Answer No (yes/no questions only), type a value, leave blank |
+| Ranking not found | Most likely not ranked | Not ranked, type a value, leave blank |
+| Not published: confirm | The program's pages were read and none states it | Leave blank, type a value |
+
+Work through it on the web app's **Review** page. Set your name once and it's stored with each decision. A
+decision removes the cell from the queue, and the **Reviewed** tab can undo it. To work in Excel instead, export
+the queue, fill the yellow Decision / Value / Source URL / Note columns, and import it back. The web app's page
+has buttons for both, or use the command line:
+
+```bash
+uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
+  python -m field_pipeline.review "../EDIT Competitive Analysis Research 2026-2027.xlsx" --export
+```
+
+```bash
+uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
+  python -m field_pipeline.review "../EDIT Competitive Analysis Research 2026-2027.xlsx" \
+  --import "../EDIT Competitive Analysis Research 2026-2027_field_pipeline/review_queue.xlsx" --reviewer "Your Name"
+```
+
+Decisions are appended to `<workbook>_field_pipeline/reviews.csv`, which is never rewritten, so it doubles as an
+audit log; the newest decision per cell wins. `python -m knowledge_base` uses reviewed values ahead of every
+pipeline value, tags them "reviewed", and keeps the source URL and quote, so the monthly check covers them too.
+Reviews don't change the workbook: later pipeline runs still research those cells, but the reviewed value keeps
+winning in the knowledge base.
+
+## Monthly source health check
+
+`health.py` re-opens every source page behind the knowledge base and checks that each stored quote is still on
+it. It makes no RCAC calls, opens about 185 pages, and takes 40–60 minutes. Run it from `agent-workspace/`:
+
+```bash
+uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
+  python -m field_pipeline.health "../EDIT Competitive Analysis Research 2026-2027.xlsx"
+```
+
+The facts it checks are the knowledge base's: the newest pipeline run per cell plus values typed into the
+workbook. Each URL is fetched once with the pipeline's browser fetcher, and every fact citing it gets one result:
+
+| Result | Meaning |
+|---|---|
+| `ok` | The quote is on the page (same matching as validate: case, spacing and punctuation ignored) |
+| `moved` | The quote is on the page, but the URL now redirects elsewhere |
+| `changed` | The exact quote is gone, but a near copy is there with some words or numbers different (e.g. `$1,250` → `$1,310`, `2026-2027` → `2027-2028`). `snippet` holds what the page says now |
+| `missing` | The page reads fine but has neither the quote nor a near copy |
+| `dead` | HTTP 404/410, a "page not found" page, or a redirect to the site's home page |
+| `unreadable` | Bot wall, timeout, empty page, or a quote that came from image OCR. This says nothing about the fact |
+| `live` | A fact with a URL but no quote (typed value, computed total, IPEDS) whose page still opens |
+
+Before `changed` or `missing` is reported, the page is re-read once over plain HTTP. Quotes shorter than four
+words are never near-matched, so they are either `ok` or `missing`. Results go to
+`<workbook>_field_pipeline/health/<date_time>/`:
+
+- `health.csv`: one line per fact.
+- `recheck.csv`: the changed, missing or dead cells.
+- `health.log`: the run log.
+
+Every check is also stored in the `health` table of `pipeline.sqlite`, so history builds up month to month. The
+refreshed pages replace the cached copies, so the next pipeline run reads current text. Pages checked within
+`--stale-days` (default 25) are skipped, which means re-running after a crash picks up where it stopped. Other
+options:
+
+- `--links`: also check last year's workbook links (liveness only).
+- `--only`, `--sheet` and `--limit`: narrow the check.
+- `--browser`: the same choices as the pipeline.
+
+To research the flagged cells again, pass the recheck file to the pipeline. It researches only those cells and
+ignores their stored values:
+
+```bash
+uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
+  python -m field_pipeline "../EDIT Competitive Analysis Research 2026-2027.xlsx" \
+  --recheck "../EDIT Competitive Analysis Research 2026-2027_field_pipeline/health/<date_time>/recheck.csv"
+```
+
+`python -m knowledge_base` reads the latest check of each fact. The comparison page marks changed, missing and
+dead sources with a red "source …" tag, and `kb.sqlite` has the `health`, `health_checked` and `health_now`
+columns. The web app's **Source health** page runs a check, lists the flagged values, and has a button that
+starts the `--recheck` run.
+
+**Schedule.** This command installs a launchd job that runs the check on the 1st of every month at 9:00 with
+`--browser auto`, which uses cloud if `BROWSER_USE_API_KEY` is set and local Chrome otherwise. Change the timing
+with `--day` and `--hour`, and the browser with `--browser`:
+
+```bash
+uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
+  python -m field_pipeline.health "../EDIT Competitive Analysis Research 2026-2027.xlsx" --install-schedule
+```
+
+launchd only runs the job while the Mac is awake; a missed run happens at the next wake. Local Chrome also
+needs remote debugging allowed. The job's output goes to `health/launchd.log`. Remove it with
+`--uninstall-schedule`.
+
 ## How it works
 
 ```
@@ -193,16 +303,25 @@ workbook -> 1 discover -> 2 fetch -> 3 chunk -> 4 retrieve -> 5 extract -> 6 val
    - **crawl** outward from the start link and the found pages, plus the school's sitemap; URLs are scored per
      field group and each group gets its own best pages.
    - **rankings**: each ranking column searches its publisher (usnews.com, best-masters.com,
-     topuniversities.com) and opens the top results there; the school's own "rankings" pages are used too.
-   - Undergraduate pages, other programs' pages and other schools' sections of the site are skipped.
+     topuniversities.com) and opens the top results there; the school's own "rankings" pages are used too. For QS
+     the university's `topuniversities.com/universities/<slug>` page is opened (followed from QS search pages, or
+     the slug guessed): it states the QS World University Rank, while QS search/list pages render by script and
+     hold no ranks, so they are never excerpt sources.
+   - Undergraduate pages, other programs' pages and other schools' sections of the site are skipped. A page under a
+     program path must name the whole program (both distinctive words of a two-word name, all but one of a longer
+     one; "management" / "business" alone never count), and another professional school's subdomain or section
+     (`kentlaw.`, `law.`, `/law/`, medicine, nursing...) is dropped unless the start link is on it.
 2. **fetch** (`fetch.py`): browser-harness renders the page and opens accordions/tabs; plain HTTP is the fallback;
    PDFs are read with pypdf.
 3. **chunk** (`retrieve.py`): pages -> ~1,500-character chunks; duplicate pages dropped.
-4. **retrieve** (`retrieve.py`): BM25 ranks chunks per field group; the top 10 go to the model.
+4. **retrieve** (`retrieve.py`): BM25 ranks chunks per field group; the top 18 go to the model. A ranking
+   publisher's pages are only shown to that publisher's ranking call (and U.S. News profiles to the class-stat
+   groups, `fields.visible`): they are long and mention every topic, and once took 40% of the excerpts of other
+   calls. The school's own pages are shown to every group.
 5. **extract** (`extract.py`): one RCAC call per field group: 16 narrow groups (test scores, class makeup,
    tuition, aid, deadlines, requirements, structure, campus, experiential, community, career, outcomes, basics,
    and one per ranking publisher), so about 16 calls per school. Fields still missing get a **second pass** on the
-   next 10 chunks (about 8-12 more calls).
+   next 18 chunks, never one the first pass showed, at most 4 from one page (about 8-12 more calls).
 6. **validate** (`validate.py`): quote must be on the page, value's numbers in the quote, value in range,
    academic year within the field's `max_lag`, right program; ranking values must come from (or name) their
    publisher.
@@ -217,12 +336,13 @@ From the repo root:
 
 ```bash
 uv run --with pytest --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
-  python -m pytest tests/unit/test_field_pipeline.py -q
+  python -m pytest tests/unit/test_field_pipeline.py tests/unit/test_health.py tests/unit/test_review.py -q
 ```
 
 ## Known limits
 
-- Rows without a Website Link are skipped (fill the link in the workbook).
+- Rows without a Website Link and no program page found by search are researched site-wide, which is noisier
+  than starting from the program page: fill the link in the workbook when you know it.
 - If Browser Use runs out of credits (HTTP 402) the run stops researching, writes everything finished plus the
   stored results of the remaining rows, and stops the browser; rerun later (or without `--browser cloud`) to continue.
 - usnews.com is strict with automated browsers; if a profile page can't be opened, U.S. News values come from the

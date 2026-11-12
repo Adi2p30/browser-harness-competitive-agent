@@ -11,6 +11,8 @@ uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
 
 Each (program, field) value comes from, in order:
 
+0. a decision made in the review queue (`<workbook>_field_pipeline/reviews.csv`, see `field_pipeline/review.py`):
+   a person's value beats every pipeline value; "leave blank" decisions add nothing
 1. this year's `field_pipeline` results, from every run version (`<workbook>_field_pipeline/runs/*/decisions.csv`;
    the newest run that filled a cell wins): source URL and quote kept
 2. a value already typed into this year's workbook
@@ -23,5 +25,5 @@ Each (program, field) value comes from, in order:
   Pick a program type, schools (Purdue is always pinned), field groups and filters ("Out-of-State Tuition
   Total ≤ 60000"). Numbers show the difference from Purdue. Hover a value to see its quote; ↗ opens the source.
   The address bar holds the current view, so a copied link reopens the same comparison. Export CSV downloads it.
-- `kb.sqlite`: `programs`, `fields`, `facts` (value, number, cycle, status, source_url, quote), for SQL queries
+- `kb.sqlite`: `programs`, `fields`, `facts` (value, number, cycle, status, source_url, quote, and the latest source health check: health, health_checked, health_now; see `field_pipeline/health.py`), for SQL queries
   or a future question box that turns plain-English questions into filters.

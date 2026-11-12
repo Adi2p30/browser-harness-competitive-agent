@@ -4,8 +4,12 @@ bundle. See docs/okf/project/components/webapp.md.
     uv run --with flask --with openpyxl --with beautifulsoup4 --with requests --with pypdf \\
         --with pyyaml python webapp/app.py
 """
+import csv
 import sys
+import tempfile
+import threading
 import uuid
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,11 +17,13 @@ AGENT_WORKSPACE = ROOT / "agent-workspace"
 sys.path.insert(0, str(AGENT_WORKSPACE))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from flask import Flask, Response, abort, redirect, render_template, request, stream_with_context, url_for  # noqa: E402
+from flask import (Flask, Response, abort, redirect, render_template, request, send_file,  # noqa: E402
+                   stream_with_context, url_for)
 
 import mdlite  # noqa: E402
-from runner import PHASE_LABELS, Run, start_run, stop_run  # noqa: E402
-from field_pipeline import llm  # noqa: E402
+from runner import PHASE_LABELS, Run, start_health, start_run, stop_run  # noqa: E402
+from field_pipeline import llm, review  # noqa: E402
+from field_pipeline.store import DEFAULT_DB  # noqa: E402
 from field_pipeline.workbook import read_rows  # noqa: E402
 from knowledge_base.okf_format import read_concept  # noqa: E402
 
@@ -28,7 +34,9 @@ _runs: dict[str, Run] = {}
 
 
 def _xlsx() -> Path | None:
-    return next(ROOT.glob("EDIT Competitive Analysis Research*.xlsx"), None)
+    """The workbook itself, not a copy next to it (the pipeline's "<workbook>_field_pipeline.xlsx", a "_filled"
+    export): the shortest matching name."""
+    return min(ROOT.glob("EDIT Competitive Analysis Research*.xlsx"), key=lambda p: (len(p.name), p.name), default=None)
 
 
 def _running() -> list[Run]:
@@ -124,13 +132,176 @@ def run_stop(run_id):
     return redirect(url_for("run_view", run_id=run_id))
 
 
+def _health_dirs(xlsx: Path | None) -> list[Path]:
+    """Source health check folders (field_pipeline.health), newest first."""
+    if not xlsx:
+        return []
+    base = xlsx.with_name(f"{xlsx.stem}_field_pipeline") / "health"
+    return sorted((d for d in base.glob("*") if (d / "health.csv").exists()), reverse=True)
+
+
+def _read_csv(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+@app.get("/health")
+def health_index():
+    xlsx = _xlsx()
+    dirs = _health_dirs(xlsx)
+    chosen = next((d for d in dirs if d.name == request.args.get("check")), dirs[0] if dirs else None)
+    rows = _read_csv(chosen / "health.csv") if chosen else []
+    order = {"changed": 0, "missing": 1, "dead": 2, "unreadable": 3}
+    flagged = sorted((r for r in rows if r["result"] in order), key=lambda r: (order[r["result"]], r["university"]))
+    return render_template("health.html", xlsx=xlsx, checks=dirs, chosen=chosen, rows=rows, flagged=flagged,
+                           counts=Counter(r["result"] for r in rows), running=_running(),
+                           recheck=len(_read_csv(chosen / "recheck.csv")) if chosen else 0,
+                           rcac_warning=_rcac_key_missing(), runs=sorted(_runs.values(), key=lambda r: -r.started_at))
+
+
+@app.post("/health/run")
+def health_start():
+    xlsx = _xlsx()
+    if not xlsx:
+        abort(400, "no 'EDIT Competitive Analysis Research*.xlsx' workbook found in the repo root")
+    if _running():  # the check writes the shared page cache and health table: not alongside a pipeline run
+        abort(409, "a run is going; start the source check when it finishes")
+    run = start_health(xlsx, AGENT_WORKSPACE, browser=request.form.get("browser", "local"),
+                       links="links" in request.form, stale_days=0 if "all" in request.form else None)
+    _runs[run.id] = run
+    return redirect(url_for("run_view", run_id=run.id))
+
+
+@app.post("/health/recheck")
+def health_recheck():
+    xlsx = _xlsx()
+    chosen = next((d for d in _health_dirs(xlsx) if d.name == request.form.get("check")), None)
+    if not xlsx or not chosen or not _read_csv(chosen / "recheck.csv"):
+        abort(400, "no flagged cells to research again")
+    if warning := _rcac_key_missing():
+        abort(400, warning)
+    run = start_run(xlsx, AGENT_WORKSPACE, sheets=[], only=[], limit=None, overwrite=False, fresh=False,
+                    browser=request.form.get("browser", "local"), db=_db_for_new_run(),
+                    recheck=chosen / "recheck.csv")
+    _runs[run.id] = run
+    return redirect(url_for("run_view", run_id=run.id))
+
+
+_queue_cache: dict = {"key": None, "items": []}
+_queue_lock = threading.Lock()
+
+
+def _queue(xlsx: Path) -> list[dict]:
+    """The review queue, rebuilt only when its inputs change (runs, the workbook, reviews, health checks)."""
+    base = xlsx.with_name(f"{xlsx.stem}_field_pipeline")
+    inputs = [xlsx, review.reviews_path(xlsx), DEFAULT_DB, *sorted(base.glob("runs/*/decisions.csv"))]
+    key = tuple((str(p), p.stat().st_mtime if p.exists() else 0) for p in inputs)
+    with _queue_lock:
+        if _queue_cache["key"] != key:
+            _queue_cache.update(key=key, items=review.build_queue(xlsx))
+        return _queue_cache["items"]
+
+
+def _review_args() -> dict:
+    """The filters to come back to after a decision."""
+    src = request.form if request.method == "POST" else request.args
+    return {k: src.get(k) for k in ("group", "sheet", "q") if src.get(k)}
+
+
+@app.get("/review")
+def review_index():
+    xlsx = _xlsx()
+    if not xlsx:
+        return render_template("review.html", xlsx=None)
+    items = _queue(xlsx)
+    sheet, q = request.args.get("sheet", ""), request.args.get("q", "").strip().casefold()
+    shown = [i for i in items if (not sheet or i["sheet"] == sheet) and (not q or q in i["university"].casefold())]
+    counts = Counter(i["group"] for i in shown)
+    reviewed = sorted(review.load_reviews(xlsx).values(), key=lambda r: r["at"], reverse=True)
+    group = request.args.get("group") or next((g for g in review.GROUPS if counts[g]), "candidate")
+    return render_template("review.html", xlsx=xlsx, groups=review.GROUPS, choices=review.CHOICES, group=group,
+                           counts=counts, items=[i for i in shown if i["group"] == group], total=len(shown),
+                           sheets=sorted({i["sheet"] for i in items}), sheet=sheet, q=request.args.get("q", ""),
+                           reviewed=reviewed, reviewer=request.cookies.get("reviewer", ""),
+                           msg=request.args.get("msg", ""), error=request.args.get("error", ""))
+
+
+@app.post("/review/decide")
+def review_decide():
+    xlsx = _xlsx()
+    item = next((i for i in _queue(xlsx) if i["id"] == request.form.get("id")), None) if xlsx else None
+    if item is None:
+        return redirect(url_for("review_index", **_review_args(), error="That cell is no longer in the queue."))
+    try:
+        row = review.make_review(item, request.form.get("decision", ""), request.form.get("value", ""),
+                                 request.form.get("source_url", ""), request.form.get("note", ""),
+                                 request.cookies.get("reviewer", ""))
+    except ValueError as exc:
+        return redirect(url_for("review_index", **_review_args(), error=f"{item['university']} / {item['field']}: {exc}")
+                        + f"#{item['id']}")
+    review.append_reviews(xlsx, [row])
+    return redirect(url_for("review_index", **_review_args(),
+                            msg=f"Saved {item['field']} for {item['university']}: {row['decision']}"))
+
+
+@app.post("/review/undo")
+def review_undo():
+    xlsx = _xlsx()
+    done = review.load_reviews(xlsx) if xlsx else {}
+    sheet, row, field = (request.form.get("id") or "||").split("|", 2)
+    rv = done.get((sheet, int(row or 0), field))
+    if rv:
+        review.append_reviews(xlsx, [review.undo_review(rv, request.cookies.get("reviewer", ""))])
+    return redirect(url_for("review_index", **_review_args(), group="reviewed",
+                            msg=f"{field} for {rv['university']} is back in the queue" if rv else ""))
+
+
+@app.post("/review/name")
+def review_name():
+    resp = redirect(url_for("review_index", **_review_args()))
+    resp.set_cookie("reviewer", request.form.get("reviewer", "").strip()[:60], max_age=365 * 86400, samesite="Lax")
+    return resp
+
+
+@app.get("/review/export")
+def review_export():
+    xlsx = _xlsx()
+    if not xlsx:
+        abort(400, "no workbook")
+    dest = xlsx.with_name(f"{xlsx.stem}_field_pipeline") / "review_queue.xlsx"
+    review.export_xlsx(_queue(xlsx), dest)
+    return send_file(dest, as_attachment=True, download_name="review_queue.xlsx")
+
+
+@app.post("/review/import")
+def review_import():
+    xlsx = _xlsx()
+    upload = request.files.get("file")
+    if not xlsx or not upload or not upload.filename:
+        return redirect(url_for("review_index", error="Choose the filled-in review_queue.xlsx first."))
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "import.xlsx"
+        upload.save(path)
+        try:
+            rows, problems = review.import_xlsx(path, _queue(xlsx), request.cookies.get("reviewer", ""))
+        except Exception as exc:  # not an export of the queue
+            return redirect(url_for("review_index", error=f"Could not read that file: {exc}"))
+    review.append_reviews(xlsx, rows)
+    note = f"Imported {len(rows)} decision(s)." + (f" Skipped {len(problems)}: " + "; ".join(problems[:5])
+                                                     if problems else "")
+    return redirect(url_for("review_index", msg=note))
+
+
 @app.get("/knowledge")
 def knowledge_index():
     if not KNOWLEDGE.exists():
         return render_template("knowledge.html", built=False)
     frontmatter, body = read_concept(KNOWLEDGE / "index.md")
-    return render_template("knowledge.html", built=True, title=frontmatter.get("title", "Knowledge"),
-                           body_html=mdlite.render(body))
+    title = frontmatter.get("title", "Knowledge")
+    return render_template("knowledge.html", built=True, title=title,
+                           body_html=mdlite.render(mdlite.drop_title(body, title)))
 
 
 @app.get("/knowledge/<path:rel>")
@@ -139,8 +310,16 @@ def knowledge_page(rel):
     if KNOWLEDGE not in path.parents or not path.exists():
         abort(404)
     frontmatter, body = read_concept(path)
+    title = frontmatter.get("title", rel)
     return render_template("knowledge_concept.html", frontmatter=frontmatter,
-                           body_html=mdlite.render(body), title=frontmatter.get("title", rel))
+                           body_html=mdlite.render(mdlite.drop_title(body, title)), title=title,
+                           updated=_day(frontmatter.get("generated", {}).get("at")),
+                           stale_after=_day(frontmatter.get("stale_after")))
+
+
+def _day(value) -> str:
+    """'2026-10-30T01:44:03Z' -> '2026-10-30' (frontmatter dates, for display)."""
+    return str(value)[:10] if value else ""
 
 
 if __name__ == "__main__":

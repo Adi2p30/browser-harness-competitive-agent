@@ -556,6 +556,41 @@ def test_usnews_profile_always_shown_to_the_model(monkeypatch):
     assert "[C99]" in seen["prompt"]  # ranked last by BM25, still shown
 
 
+def test_ranking_sites_stay_in_their_own_calls(monkeypatch):
+    from field_pipeline import extract
+    from field_pipeline.fields import visible
+    from field_pipeline.retrieve import Chunk
+    us = "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-01109"
+    bm = "https://www.best-masters.com/master-human-resources-management-ranking.html"
+    assert visible("rank_bestmasters", bm) and not visible("structure", bm) and not visible("rank_qs", bm)
+    assert visible("class", us) and visible("rank_usnews", us) and not visible("tuition", us)
+    assert not visible("class", "https://www.usnews.com/best-colleges/clark-university-2139/overall-rankings")
+    assert visible("structure", "https://www.clarku.edu/business/") and visible("rank_qs", "https://www.clarku.edu/")
+    text = "credit hours duration months curriculum specializations tracks " * 5
+    chunks = [Chunk("C1", bm, "Best Masters", text), Chunk("C2", us, "Clark", text),
+              Chunk("C3", "https://www.clarku.edu/mshrm", "Clark", "The program is 36 credit hours.")]
+    seen = {}
+    monkeypatch.setattr(extract.llm, "chat_json", lambda prompt: seen.setdefault("prompt", prompt) and {})
+    extract.extract_group("CLARK UNIVERSITY", "MS HRM", "2026-10-23", "structure",
+                          {"Credit Hours": f("Credit Hours")}, chunks, k=10, usnews="business-school")
+    assert "[C3]" in seen["prompt"] and "[C1]" not in seen["prompt"] and "[C2]" not in seen["prompt"]
+
+
+def test_program_name_spells_out_sheet_abbreviations():
+    from field_pipeline.discover import program_name
+    assert program_name("", "MS HRM - Residential") == "MS human resource management"
+    assert program_words(program_name("", "MS HRM - Residential")) == {"human", "resou", "manag"}
+    assert program_name("PEOPLE ANALYTICS", "MS HRM - Residential") == "PEOPLE ANALYTICS"
+
+
+def test_home_page_start_scopes_site_only():
+    from field_pipeline.discover import section_bonus
+    w = program_words("MS human resource management")
+    assert section_bonus("https://www.byu.edu/marriott/hr/", "https://byu.edu/") == 0  # no section to compare to
+    assert foreign_program("https://byu.edu/programs/chemistry-ms", w, "https://byu.edu/")  # host is not a program path
+    assert not foreign_program("https://byu.edu/programs/human-resource-management", w, "https://byu.edu/")
+
+
 def test_business_school_profile_is_school_wide_on_online_rows():
     from field_pipeline.extract import judge
     from field_pipeline.retrieve import Chunk
@@ -599,3 +634,72 @@ def test_credit_hours_not_units_and_yes_no_needs_support():
     assert check(campus, "No – fully online", q, q)[0] == "found"
     q = "All programs require the equivalent of a four-year U.S. bachelor's degree."
     assert check(india, "No", q, q)[0] == "found"
+
+
+def test_other_programs_need_the_whole_name():
+    w = program_words("PEOPLE ANALYTICS")
+    start = "https://www.iit.edu/academics/programs/people-analytics-ms"
+    assert foreign_program("https://www.iit.edu/academics/programs/marketing-analytics-ms", w, start)
+    assert foreign_program("https://www.iit.edu/academics/programs/analytical-chemistry-ms/faqs", w, start)
+    assert not foreign_program("https://catalog.iit.edu/graduate/programs/ms-people-analytics/", w, start)
+    hrm = program_words("MS human resource management")  # 'management' alone does not name it
+    assert foreign_program("https://x.edu/programs/engineering-management-ms", hrm)
+    assert not foreign_program("https://x.edu/programs/human-resource-management-ms", hrm)
+    gwu = "https://business.gwu.edu/academics/programs/masters/master-of-human-resource-management"
+    assert foreign_program("https://business.gwu.edu/academics/programs/masters/ms-in-sport-management", hrm, gwu)
+    # resource pages under a program path are not degrees: one program word is enough, as before
+    assert not foreign_program("https://business.gwu.edu/academics/programs/international/resources/student-resources",
+                               hrm, gwu)
+
+
+def test_other_professional_schools_are_foreign():
+    w = program_words("PEOPLE ANALYTICS")
+    start = "https://www.iit.edu/academics/programs/people-analytics-ms"
+    assert foreign_program("https://www.kentlaw.iit.edu/current-students/tuition-and-fees", w, start)
+    assert foreign_program("https://www.gwu.edu/law/admissions", w, "https://business.gwu.edu/ms-hrm/")
+    assert not foreign_program("https://law.gwu.edu/llm", program_words("LLM"), "https://law.gwu.edu/llm-program")
+    assert not foreign_program("https://www.iit.edu/financial-aid/scholarships", w, start)
+
+
+def test_qs_profile_followed_from_search_page():
+    from field_pipeline.discover import Discoverer
+    search = "https://www.topuniversities.com/world-university-rankings?search=Clark%20University"
+    links = [["", "https://www.topuniversities.com/universities/clarkson-university"],
+             ["Explore university", "https://www.topuniversities.com/universities/clark-university?utm_source=x"]]
+    d = Discoverer.__new__(Discoverer)
+    d.get = lambda url: {"links": links, "status": "ok"} if url == search else {"status": "unreadable"}
+    assert d.qs_profile("CLARK UNIVERSITY", [search]) == "https://www.topuniversities.com/universities/clark-university"
+    assert d.qs_profile("CORNELL UNIVERSITY", ["https://www.topuniversities.com/universities/cornell-university"]) == \
+        "https://www.topuniversities.com/universities/cornell-university"
+    assert d.qs_profile("GEORGE WASHINGTON UNIVERSITY", []) is None  # guessed slug not readable
+
+
+def test_second_pass_skips_pinned_and_caps_pages(monkeypatch):
+    from field_pipeline import extract
+    from field_pipeline.retrieve import Chunk
+    us = "https://www.usnews.com/best-graduate-schools/top-business-schools/clark-university-01109"
+    chunks = [Chunk(f"U{i}", us, "Clark", "enrollment students") for i in range(2)]
+    chunks += [Chunk(f"A{i}", "https://www.clarku.edu/a", "Clark", "class profile students " * (20 - i)) for i in range(10)]
+    chunks += [Chunk(f"B{i}", f"https://www.clarku.edu/b{i}", "Clark", "class profile students") for i in range(6)]
+    prompts = []
+    monkeypatch.setattr(extract.llm, "chat_json", lambda p: prompts.append(p) or {})
+    args = ("CLARK UNIVERSITY", "MS HRM", "2026-10-23", "class", {"Class Size": f("Class Size")}, chunks)
+    extract.extract_group(*args, k=5, usnews="business-school")
+    extract.extract_group(*args, k=5, skip=5, usnews="business-school")
+    import re
+    first, second = (re.findall(r"^\[(\w+)\]", p, re.M) for p in prompts)
+    assert {"U0", "U1"} <= set(first) and not set(first) & set(second)
+    assert sum(c.startswith("A") for c in second) <= 4
+
+
+def test_business_school_figures_called_other_become_school_wide():
+    from field_pipeline.extract import judge
+    from field_pipeline.retrieve import Chunk
+    b = Chunk("C1", "https://www.usnews.com/best-graduate-schools/top-business-schools/george-washington-university-01043",
+              "GWU Business School", "$108,316Average Base Salary")
+    item = {"value": "$108,316", "quote": "$108,316Average Base Salary", "excerpt": "C1", "applies_to": "other"}
+    r = judge(f("Average Post-Grad Salary"), "outcomes", item, [b], {"C1": b}, lambda c: c.text, "business-school")
+    assert r["status"] == "school-wide" and r["value"] == "$108,316"
+    u = Chunk("C2", "https://www.usnews.com/best-colleges/cleveland-state-university-3032", "CSU", "Female | 53.6%")
+    item = {"value": "53.6%", "quote": "Female | 53.6%", "excerpt": "C2", "applies_to": "other"}
+    assert judge(f("Female (%)"), "class", item, [u], {"C2": u}, lambda c: c.text, "business-school")["status"] == "other-program"

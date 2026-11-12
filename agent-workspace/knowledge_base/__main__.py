@@ -5,6 +5,7 @@
 Each fact is one (program, field) value with its cycle, status, source URL and quote. A value comes from, in order:
   1 this year's field_pipeline results (found / found-prior / computed / carried-forward / ipeds): every version
     in <workbook>_field_pipeline/runs/, the newest run that filled a cell wins
+  0 a decision made in the review queue (field_pipeline/review.py; reviews.csv): a person's value wins
   2 a value already typed into this year's workbook
   3 last year's workbook (cycle 2025-2026), matched by school name; schools only in last year's peer set are kept
 Writes <workbook>_kb/kb.sqlite (for queries) and <workbook>_kb/competitive_analysis.html (open in any browser;
@@ -15,10 +16,15 @@ import csv
 import json
 import re
 import sqlite3
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
 from field_pipeline.fields import FILLED, LINK, SKIP, field_for, link_target
+from field_pipeline.fetch import clean_url
+from field_pipeline.health import quote_key
+from field_pipeline.review import load_reviews
+from field_pipeline.store import DEFAULT_DB, Store
 from field_pipeline.validate import NUMERIC, to_number
 from field_pipeline.workbook import headers, read_rows, read_values
 
@@ -106,7 +112,10 @@ def match_prior(univ: str, program: str, recs: list[tuple[str, dict]], used: set
     return cands[0] if len(cands) == 1 else None
 
 
-def build(workbook: str, prior_path: str | None, decision_files: list[Path]) -> dict:
+def build(workbook: str, prior_path: str | None, decision_files: list[Path],
+          reviews: dict | None = None) -> dict:
+    """reviews: {(sheet, row, field): decision} from the review queue (default: the workbook's reviews.csv)."""
+    reviews = load_reviews(Path(workbook)) if reviews is None else reviews
     cols, rows = read_rows(workbook)
     now, found = current_values(workbook), decisions(decision_files)
     prior: dict[str, list[tuple[str, dict]]] = {}
@@ -167,13 +176,19 @@ def build(workbook: str, prior_path: str | None, decision_files: list[Path]) -> 
                 used.add(i)
             old = last_year(old_rec)
             pid = len(programs)
-            programs.append({"id": pid, "sheet": sheet, "university": row.university, "program": row.program,
+            programs.append({"id": pid, "sheet": sheet, "row": row.row, "university": row.university, "program": row.program,
                              "school": school_of(typed) or school_of(old_rec), "url": row.start_url, "purdue": words(row.university) in (["purdue", "university"], ["purdue", "university", "west", "lafayette"]),
                              "lastYearOnly": False})
             values = {}
             for name in names:
                 link = next((text(typed[l]) for l, p in links.items() if p == name and typed.get(l)), "")
-                if d := found.get((sheet, row.row, name)):
+                rv = reviews.get((sheet, row.row, name))
+                if rv and rv["decision"] != "not-published":  # a person's decision beats every pipeline value
+                    values[name] = {"v": rv["value"], "c": "2026-2027", "s": "reviewed", "u": rv["source_url"],
+                                    "q": rv["quote"], "d": f"reviewed {rv['at'][:10]}"
+                                    + (f" by {rv['reviewer']}" if rv["reviewer"] else "")
+                                    + (f": {rv['note']}" if rv["note"] else "")}
+                elif d := found.get((sheet, row.row, name)):
                     values[name] = {"v": text(d["value"]), "c": d["cycle"] or "2026-2027", "s": d["status"],
                                     "u": d["source_url"], "q": d["quote"]}
                     if d["status"].startswith("ipeds") or d["status"] == "school-wide":
@@ -189,10 +204,28 @@ def build(workbook: str, prior_path: str | None, decision_files: list[Path]) -> 
             pid = len(programs)
             programs.append({"id": pid, "sheet": sheet, "university": univ.upper(), "program": text(rec.get("Program Name") or ""),
                              "school": school_of(rec), "url": text(rec.get("Website Link") or ""),
-                             "purdue": False, "lastYearOnly": True})
+                             "purdue": False, "lastYearOnly": True, "row": None})
             add(pid, values)
     return {"built": date.today().isoformat(), "sheets": sheets,
             "programs": programs, "facts": facts}
+
+
+def attach_health(kb: dict, db: Path) -> int:
+    """Latest source health check (field_pipeline.health) of each fact: h = result, ht = date checked, hn = what
+    the page says now (changed). Returns how many facts were checked."""
+    if not db.exists():
+        return 0
+    store = Store(db)
+    latest = store.latest_health()
+    store.db.close()
+    n = 0
+    for f in kb["facts"]:
+        if f.get("u") and (h := latest.get((clean_url(str(f["u"])), quote_key(f.get("q"))))):
+            f["h"], f["ht"] = h["result"], date.fromtimestamp(h["checked_at"]).isoformat()
+            if h["snippet"]:
+                f["hn"] = h["snippet"]
+            n += 1
+    return n
 
 
 def write_sqlite(kb: dict, path: Path) -> None:
@@ -203,14 +236,16 @@ def write_sqlite(kb: dict, path: Path) -> None:
                                url TEXT, purdue INTEGER, last_year_only INTEGER);
         CREATE TABLE fields (sheet TEXT, name TEXT, field_group TEXT, kind TEXT);
         CREATE TABLE facts (program_id INTEGER REFERENCES programs(id), field TEXT, value TEXT, number REAL,
-                            cycle TEXT, status TEXT, source_url TEXT, quote TEXT);
+                            cycle TEXT, status TEXT, source_url TEXT, quote TEXT, health TEXT, health_checked TEXT,
+                            health_now TEXT);
         CREATE INDEX facts_field ON facts (field, number);
     """)
     db.executemany("INSERT INTO programs VALUES (:id, :sheet, :university, :school, :program, :url, :purdue, :lastYearOnly)",
                    kb["programs"])
     db.executemany("INSERT INTO fields VALUES (?, ?, ?, ?)",
                    [(s["name"], f["name"], f["group"], f["kind"]) for s in kb["sheets"] for f in s["fields"]])
-    db.executemany("INSERT INTO facts VALUES (:p, :f, :v, :n, :c, :s, :u, :q)", kb["facts"])
+    db.executemany("INSERT INTO facts VALUES (:p, :f, :v, :n, :c, :s, :u, :q, :h, :ht, :hn)",
+                   [{"h": None, "ht": None, "hn": None, **f} for f in kb["facts"]])
     db.commit()
     db.close()
 
@@ -222,6 +257,7 @@ def main() -> None:
     ap.add_argument("--decisions", type=Path, action="append",
                     help="field_pipeline decisions.csv to use (repeatable; default: every version of the workbook's runs)")
     ap.add_argument("--out", type=Path, help="output folder (default: <workbook>_kb/)")
+    ap.add_argument("--db", type=Path, help="field_pipeline SQLite with source health checks (default: its default)")
     ap.add_argument("--no-okf", action="store_true",
                     help="skip exporting docs/okf/knowledge/ (the Open Knowledge Format bundle)")
     args = ap.parse_args()
@@ -232,6 +268,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     files = args.decisions or versions(wb)
     kb = build(str(wb), str(prior) if prior else None, files)
+    checked = attach_health(kb, args.db or DEFAULT_DB)
     write_sqlite(kb, out / "kb.sqlite")
     page = (Path(__file__).with_name("template.html").read_text(encoding="utf-8")
             .replace("/*KB_DATA*/null", json.dumps(kb, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")))
@@ -240,6 +277,8 @@ def main() -> None:
     for f in kb["facts"]:
         by[f["s"]] = by.get(f["s"], 0) + 1
     print(f"{len(files)} pipeline version(s); {len(kb['programs'])} programs, {len(kb['facts'])} facts {by} -> {out}")
+    flagged = Counter(f["h"] for f in kb["facts"] if f.get("h") in ("changed", "missing", "dead"))
+    print(f"source health: {checked} fact(s) checked" + (f", flagged {dict(flagged)}" if flagged else ""))
     if not args.no_okf:
         from .okf_export import write_bundle
         summary = f"{len(kb['programs'])} programs, {len(kb['facts'])} facts {by}"

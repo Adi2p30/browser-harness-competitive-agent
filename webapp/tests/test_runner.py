@@ -56,3 +56,16 @@ def test_stop_sends_sigint_and_marks_stopped(tmp_path):
     stop_run(run)
     _wait(run)
     assert run.status == "stopped"
+
+
+def test_health_and_recheck_commands(monkeypatch, tmp_path):
+    import runner
+    seen = []
+    monkeypatch.setattr(runner, "launch", lambda cmd, cwd: seen.append(cmd))
+    runner.start_health(tmp_path / "w.xlsx", tmp_path, browser="cloud", links=True, stale_days=0)
+    assert seen[-1][1:3] == ["-m", "field_pipeline.health"]
+    assert seen[-1][-5:] == ["--browser", "cloud", "--links", "--stale-days", "0"]
+    runner.start_run(tmp_path / "w.xlsx", tmp_path, sheets=[], only=[], limit=None, overwrite=False, fresh=False,
+                     browser="local", recheck=tmp_path / "recheck.csv")
+    assert seen[-1][-2:] == ["--recheck", str(tmp_path / "recheck.csv")]
+    assert runner.PHASE_OF["field_pipeline.health"] == "health"

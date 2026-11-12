@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS candidates (
 CREATE TABLE IF NOT EXISTS results (
     row_key TEXT, field TEXT, grp TEXT, value TEXT, status TEXT, url TEXT, quote TEXT, detail TEXT, at REAL,
     cycle TEXT, PRIMARY KEY (row_key, field));
+CREATE TABLE IF NOT EXISTS health (
+    url TEXT, quote_key TEXT, sheet TEXT, row INTEGER, field TEXT, result TEXT, final_url TEXT, snippet TEXT,
+    score REAL, detail TEXT, checked_at REAL, run TEXT);
+CREATE INDEX IF NOT EXISTS health_url ON health (url, checked_at);
 """
 
 
@@ -86,3 +90,23 @@ class Store:
         rows = self.db.execute(f"SELECT {', '.join(keys)} FROM results WHERE row_key=? AND at >= ?",
                                (row_key, self.since)).fetchall()
         return {r[0]: dict(zip(keys, r)) for r in rows}
+
+    # source health checks (health.py): one row per fact per check, so history accumulates
+    def save_health(self, rows: list[dict]) -> None:
+        keys = ("url", "quote_key", "sheet", "row", "field", "result", "final_url", "snippet", "score", "detail",
+                "checked_at", "run")
+        with self.lock:
+            self.db.executemany(f"INSERT INTO health VALUES ({','.join('?' * len(keys))})",
+                                [tuple(r.get(k) for k in keys) for r in rows])
+            self.db.commit()
+
+    def last_checked(self, url: str) -> float | None:
+        row = self.db.execute("SELECT max(checked_at) FROM health WHERE url=?", (url,)).fetchone()
+        return row[0] if row else None
+
+    def latest_health(self) -> dict[tuple[str, str], dict]:
+        """{(url, quote_key): newest check of that source and quote}."""
+        keys = ("url", "quote_key", "result", "final_url", "snippet", "detail", "checked_at")
+        rows = self.db.execute(f"SELECT {', '.join(keys)} FROM health h WHERE checked_at = (SELECT max(checked_at) "
+                               "FROM health WHERE url=h.url AND quote_key=h.quote_key)").fetchall()
+        return {(r[0], r[1]): dict(zip(keys, r)) for r in rows}
