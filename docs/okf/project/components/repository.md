@@ -12,7 +12,7 @@ status: stable
 | Path | What it is |
 |---|---|
 | `README.md` | entry point: what this tool does, how to run it |
-| `run-webapp` | launches [webapp](/okf/project/components/webapp.md) via `uv` |
+| `run-webapp.sh` | launches [webapp](/okf/project/components/webapp.md) via `uv` |
 | `webapp/` | the Flask app — see [webapp](/okf/project/components/webapp.md) |
 | `agent-workspace/field_pipeline/` | fills the workbook — see [field_pipeline](/okf/project/components/field-pipeline.md), [stages](/okf/project/stages/index.md) |
 | `agent-workspace/knowledge_base/` | report + OKF export — see [knowledge_base](/okf/project/components/knowledge-base.md) |

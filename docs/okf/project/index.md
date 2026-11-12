@@ -13,7 +13,7 @@ in one table) and [`stages/`](/okf/project/stages/index.md) for how one row is f
 ## Run it
 
 ```bash
-./run-webapp
+./run-webapp.sh
 ```
 
 Open the printed `http://127.0.0.1:5000`, add a program and/or school (dropdowns, plus

@@ -11,7 +11,7 @@ See [`docs/okf/project/index.md`](docs/okf/project/index.md) for how the pieces 
 ## Run the web app
 
 ```bash
-./run-webapp
+./run-webapp.sh
 ```
 
 Open the printed `http://127.0.0.1:5000`. Pick a sheet (and optionally a school filter, row
