@@ -3,6 +3,10 @@
 {% block content %}
 <h1>Competitive Analysis Harness</h1>
 
+{% if form_error %}
+<p class="warn"><strong>{{ form_error }}</strong> Pick a program that school is on, or remove the school filter.</p>
+{% endif %}
+
 {% if rcac_warning %}
 <p class="warn">
   <strong>{{ rcac_warning }}</strong><br>

@@ -38,7 +38,7 @@ from .fields import FILLED, plan, usnews_kind
 from .ipeds import Ipeds, page_cip
 from .retrieve import chunk_pages
 from .store import DEFAULT_DB, Store
-from .workbook import read_rows, read_values, write
+from .workbook import read_rows, read_values, selection_notes, write
 
 log = logging.getLogger("field_pipeline")
 COMPUTED_TOTALS = (("In-State Tuition Total", "In-State Tuition Per Credit"),
@@ -218,12 +218,21 @@ def main() -> None:
     try:
         summary = run(args, src, out_dir, store, fetcher)
         status = "done"
+    except NothingToDo as exc:
+        log.error("STOPPING: %s", exc)
+        status = "nothing to do"
     except KeyboardInterrupt:
         status = "interrupted"
         raise
     finally:
         fetcher.close()
         record_run(out_dir, started, status, args, summary)
+    if status != "done":
+        sys.exit(2)
+
+
+class NothingToDo(RuntimeError):
+    """The filters select no row: stop instead of reporting a successful run that researched nothing."""
 
 
 def version_dir(src: Path, fresh: bool) -> Path:
@@ -268,6 +277,12 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             ip = Ipeds()
         except Exception as exc:  # NCES unreachable on a first run: everything else still works
             log.warning("IPEDS unavailable (%s); Average Conferrals left blank", exc)
+    if args.sheet or args.only:
+        match, notes = selection_notes(read_rows(str(src))[1] if args.sheet else rows, args.sheet, args.only)
+        for note in notes:
+            log.warning("%s", note)
+        if not match:
+            raise NothingToDo("no row matches the --sheet / --only filters: " + "; ".join(notes))
     if args.only:
         rows = [r for r in rows if any(o.casefold() in r.university.casefold() for o in args.only)]
     recheck = read_recheck(args.recheck) if args.recheck else None

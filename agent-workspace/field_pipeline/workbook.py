@@ -55,6 +55,23 @@ def read_rows(path: str, sheets: list[str] | None = None) -> tuple[dict[str, lis
     return cols, rows
 
 
+def selection_notes(rows: list[Row], sheets: list[str] | None, only: list[str] | None) -> tuple[bool, list[str]]:
+    """(does any row match, what doesn't) for a run's --sheet / --only filters, matched as the pipeline matches them
+    (exact sheet name; school text contained in the university, any case). `rows` must be every row of every sheet,
+    so a school can be pointed to the sheets it is on: the web app lists every school of every sheet."""
+    names = {r.sheet for r in rows}
+    in_sheets = [r for r in rows if not sheets or r.sheet in sheets]
+    notes = [f"no rows on sheet '{s}'" for s in sheets or [] if s not in names]
+    for o in only or []:
+        if any(o.casefold() in r.university.casefold() for r in in_sheets):
+            continue
+        where = sorted({r.sheet for r in rows if o.casefold() in r.university.casefold()})
+        notes.append(f"{o} is not on {' or '.join(sheets) if sheets else 'any sheet'}"
+                     + (f" (it is on: {', '.join(where)})" if where else ""))
+    match = any(not only or any(o.casefold() in r.university.casefold() for o in only) for r in in_sheets)
+    return match, notes
+
+
 def read_values(path: str) -> dict[tuple[str, str], list[dict]]:
     """Every program row of a workbook as {column: value}, keyed by (sheet, university) casefolded."""
     wb = load_workbook(path, read_only=True)

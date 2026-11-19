@@ -24,7 +24,7 @@ import mdlite  # noqa: E402
 from runner import PHASE_LABELS, Run, start_health, start_run, stop_run  # noqa: E402
 from field_pipeline import llm, review  # noqa: E402
 from field_pipeline.store import DEFAULT_DB  # noqa: E402
-from field_pipeline.workbook import read_rows  # noqa: E402
+from field_pipeline.workbook import read_rows, selection_notes  # noqa: E402
 from knowledge_base.okf_format import read_concept  # noqa: E402
 
 app = Flask(__name__)
@@ -89,11 +89,20 @@ def run_start():
         return render_template("index.html", sheets=sheets, universities=universities, xlsx=xlsx,
                                rcac_warning=warning, running=_running(),
                                runs=sorted(_runs.values(), key=lambda r: -r.started_at))
+    sheets_chosen = request.form.getlist("sheet")
+    only = [s.strip() for s in request.form.getlist("only") if s.strip()]
+    if only:  # the school list holds every sheet's schools: a school may not be on the programs picked
+        match, notes = selection_notes(read_rows(str(xlsx))[1], sheets_chosen, only)
+        if not match:
+            sheets, universities = _workbook_options(xlsx)
+            return render_template("index.html", sheets=sheets, universities=universities, xlsx=xlsx,
+                                   form_error="Nothing to research: " + "; ".join(notes) + ".", running=_running(),
+                                   runs=sorted(_runs.values(), key=lambda r: -r.started_at)), 400
     limit = request.form.get("limit", "").strip()
     run = start_run(
         xlsx, AGENT_WORKSPACE,
-        sheets=request.form.getlist("sheet"),
-        only=[s.strip() for s in request.form.getlist("only") if s.strip()],
+        sheets=sheets_chosen,
+        only=only,
         limit=int(limit) if limit else None,
         overwrite="overwrite" in request.form,
         fresh="fresh" in request.form,

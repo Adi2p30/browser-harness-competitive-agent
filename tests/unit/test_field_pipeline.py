@@ -703,3 +703,20 @@ def test_business_school_figures_called_other_become_school_wide():
     u = Chunk("C2", "https://www.usnews.com/best-colleges/cleveland-state-university-3032", "CSU", "Female | 53.6%")
     item = {"value": "53.6%", "quote": "Female | 53.6%", "excerpt": "C2", "applies_to": "other"}
     assert judge(f("Female (%)"), "class", item, [u], {"C2": u}, lambda c: c.text, "business-school")["status"] == "other-program"
+
+
+def test_selection_notes_school_not_on_chosen_sheets():
+    from field_pipeline.workbook import Row, selection_notes
+    rows = [Row("1yr MBA", 2, "EMORY UNIVERSITY", "", "", []),
+            Row("MS Accounting - Residential", 2, "BABSON COLLEGE", "", "", []),
+            Row("MS BAIM - Residential", 7, "CARNEGIE MELLON UNIVERSITY", "", "", []),
+            Row("Master of Business & Technology", 14, "CARNEGIE MELLON UNIVERSITY", "", "", [])]
+    match, notes = selection_notes(rows, ["1yr MBA", "MS Accounting - Residential"], ["CARNEGIE MELLON UNIVERSITY"])
+    assert not match
+    assert notes == ["CARNEGIE MELLON UNIVERSITY is not on 1yr MBA or MS Accounting - Residential "
+                     "(it is on: MS BAIM - Residential, Master of Business & Technology)"]
+    match, notes = selection_notes(rows, ["1yr MBA"], ["emory", "CARNEGIE"])  # one school matches: run, with a note
+    assert match and len(notes) == 1 and notes[0].startswith("CARNEGIE is not on 1yr MBA")
+    assert selection_notes(rows, ["No Such Sheet"], None) == (False, ["no rows on sheet 'No Such Sheet'"])
+    assert selection_notes(rows, None, ["harvard"]) == (False, ["harvard is not on any sheet"])
+    assert selection_notes(rows, ["1yr MBA"], None) == (True, [])

@@ -202,3 +202,18 @@ def test_knowledge_pages_use_compact_layout(client):
     if page:
         body = c.get(f"/knowledge/{page.name}").get_data(as_text=True)
         assert 'class="zoom-bar"' in body and "knowledge.js" in body and 'class="okf-table"' in body
+
+
+def test_run_refused_when_school_is_not_on_chosen_programs(client, monkeypatch):
+    from field_pipeline.workbook import Row
+    c, calls = client
+    rows = [Row("1yr MBA", 2, "EMORY UNIVERSITY", "", "", []),
+            Row("MS BAIM - Residential", 7, "CARNEGIE MELLON UNIVERSITY", "", "", [])]
+    monkeypatch.setattr(webapp, "read_rows", lambda path, sheets=None: ({"1yr MBA": [], "MS BAIM - Residential": []},
+                                                                       rows))
+    r = c.post("/run", data={"sheet": ["1yr MBA"], "only": ["CARNEGIE MELLON UNIVERSITY"]})
+    assert r.status_code == 400 and not calls
+    body = r.get_data(as_text=True)
+    assert "Nothing to research" in body and "it is on: MS BAIM - Residential" in body
+    assert c.post("/run", data={"sheet": ["MS BAIM - Residential"], "only": ["CARNEGIE MELLON UNIVERSITY"]}).status_code == 302
+    assert calls[-1]["only"] == ["CARNEGIE MELLON UNIVERSITY"]

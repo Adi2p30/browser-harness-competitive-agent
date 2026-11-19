@@ -2,6 +2,16 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-19: Stop runs whose sheet and school filters match nothing
+
+A run for a school that isn't on any of the selected sheets used to finish as "done" with 0 rows and 0 cells,
+without saying why. For example, Carnegie Mellon picked with 1yr MBA and MS Accounting, where it has no row.
+This is easy to do from the web app, whose school list holds every sheet's schools. The pipeline now checks the
+--sheet and --only filters before starting. It names each school that isn't on the chosen sheets, and the sheets
+it is on, and stops with exit code 2 and status "nothing to do" in runs.csv when no row matches. The web app's run
+form refuses that combination with the same explanation, while a selection where at least one school matches
+still starts. Both use the new `workbook.selection_notes()`.
+
 ## 2026-11-12: Wider retrieval, cleaner sources, source health checks and a review queue
 
 **Extraction.** Each LLM call now gets 18 chunks instead of 10. Ranking-publisher pages (U.S. News, QS,
