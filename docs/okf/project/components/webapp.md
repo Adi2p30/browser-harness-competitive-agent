@@ -22,7 +22,8 @@ status: stable
   launches `python -m field_pipeline` as a subprocess (`cwd=agent-workspace`) and tails its
   log; stopping a run sends it `SIGINT`, the same signal `field_pipeline.__main__.main()`
   already catches to save partial results before exiting.
-- `/review` — the review queue (`field_pipeline.review`): every unfilled or stale cell, grouped by what a
+- `/review` — the review queue (`field_pipeline.review`) for one run at a time (`?run=`, newest by default, or
+  `all`): every unfilled or stale cell of that run, grouped by what a
   person needs to do, with one-click decisions (accept the rejected candidate, Not ranked, No, leave blank) or
   a typed value and source. Decisions append to `<workbook>_field_pipeline/reviews.csv`; a Reviewed tab undoes
   them; the queue also round-trips through an Excel export/import. The reviewer's name is a cookie.

@@ -201,6 +201,11 @@ first:
 | Ranking not found | Most likely not ranked | Not ranked, type a value, leave blank |
 | Not published: confirm | The program's pages were read and none states it | Leave blank, type a value |
 
+The queue is per run. The web app's **Review** page opens on the newest run and has a **Run** picker for any
+earlier one, plus "All runs", which uses the newest result per cell. A run's queue lists the cells that run left
+unfilled. Cells another run or the workbook has filled since are left out, and the page says how many. On the
+command line, `--run <version folder>` (or `--run latest`) does the same, and `--list-runs` shows the run ids.
+
 Work through it on the web app's **Review** page. Set your name once and it's stored with each decision. A
 decision removes the cell from the queue, and the **Reviewed** tab can undo it. To work in Excel instead, export
 the queue, fill the yellow Decision / Value / Source URL / Note columns, and import it back. The web app's page

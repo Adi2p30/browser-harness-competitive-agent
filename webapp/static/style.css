@@ -262,3 +262,10 @@ button.ghost:hover { background: var(--line); color: var(--ink); }
   .topbar nav a { margin-left: 0; font-size: 0.85rem; }
   .brand { font-size: 1rem; }
 }
+
+/* review queue: which run's cells are listed */
+.run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin: 0.75rem 0; }
+.run-picker select { margin-left: 0.4rem; font-size: 0.95em; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0.4rem 0.55rem; max-width: 100%; }
+.run-picker label { display: flex; align-items: center; gap: 0.4rem; min-width: 0; max-width: 100%; }
+.run-picker select { margin-left: 0; min-width: 0; flex: 1 1 auto; width: 100%; max-width: 42rem; }

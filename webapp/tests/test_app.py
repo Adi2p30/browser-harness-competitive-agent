@@ -115,8 +115,12 @@ def test_health_start_blocked_while_a_run_is_going(client, tmp_path, monkeypatch
     assert c.post("/health/run", data={"browser": "local"}).status_code == 409  # the fake health run is "running"
 
 
+class _Path(type(Path())):  # a Path that can carry test notes
+    pass
+
+
 def _review_setup(tmp_path, monkeypatch):
-    xlsx = tmp_path / "EDIT Competitive Analysis Research 2026-2027.xlsx"
+    xlsx = _Path(tmp_path) / "EDIT Competitive Analysis Research 2026-2027.xlsx"
     xlsx.write_bytes(b"")
     base = {"sheet": "MS HRM", "row": 2, "university": "PURDUE", "program": "HRM", "status": "bad-value",
             "quote": "Average GMAT 650", "url": "https://purdue.edu/hrm", "detail": "names 2019-2020", "snippet": "",
@@ -126,8 +130,19 @@ def _review_setup(tmp_path, monkeypatch):
              {**base, "id": "MS HRM|2|Ranking (QS)", "field": "Ranking (QS)", "group": "ranking", "value": "",
               "status": "not-found", "quote": "", "url": ""}]
     monkeypatch.setattr(webapp, "_xlsx", lambda: xlsx)
-    monkeypatch.setattr(webapp, "_queue", lambda x: [i for i in items
-                                                     if (i["sheet"], i["row"], i["field"]) not in webapp.review.load_reviews(x)])
+    asked = []
+
+    def fake_queue(x, run):
+        asked.append(run)
+        done = webapp.review.load_reviews(x)
+        return {"items": [i for i in items if (i["sheet"], i["row"], i["field"]) not in done], "run": run,
+                "filled_elsewhere": 2, "reviewed": 0, "cells": {(i["sheet"], i["row"], i["field"]) for i in items}}
+
+    monkeypatch.setattr(webapp, "_queue", fake_queue)
+    monkeypatch.setattr(webapp.review, "list_runs", lambda x: [
+        {"id": "2026-11-06_103455_fresh", "label": "2026-11-06 10:34 (fresh) · MS HRM · 4 rows"},
+        {"id": "2026-10-23_124342_fresh", "label": "2026-10-23 12:43 (fresh) · MS HRM · 10 rows"}])
+    xlsx.asked = asked
     return xlsx
 
 
@@ -217,3 +232,23 @@ def test_run_refused_when_school_is_not_on_chosen_programs(client, monkeypatch):
     assert "Nothing to research" in body and "it is on: MS BAIM - Residential" in body
     assert c.post("/run", data={"sheet": ["MS BAIM - Residential"], "only": ["CARNEGIE MELLON UNIVERSITY"]}).status_code == 302
     assert calls[-1]["only"] == ["CARNEGIE MELLON UNIVERSITY"]
+
+
+def test_review_is_by_run(client, tmp_path, monkeypatch):
+    c, _ = client
+    xlsx = _review_setup(tmp_path, monkeypatch)
+    body = c.get("/review").get_data(as_text=True)
+    assert xlsx.asked[-1] == "2026-11-06_103455_fresh"  # the newest run by default
+    assert 'value="2026-11-06_103455_fresh" selected' in body and "All runs" in body
+    assert "2 cells this" in body and "not listed" in body
+    c.get("/review?run=2026-10-23_124342_fresh")
+    assert xlsx.asked[-1] == "2026-10-23_124342_fresh"
+    c.get("/review?run=all")
+    assert xlsx.asked[-1] is None
+    c.get("/review?run=nope")
+    assert xlsx.asked[-1] == "2026-11-06_103455_fresh"  # unknown run: back to the newest
+    r = c.post("/review/decide", data={"id": "MS HRM|2|Average GMAT", "decision": "accept",
+                                       "run": "2026-10-23_124342_fresh", "group": "candidate"})
+    assert "run=2026-10-23_124342_fresh" in r.headers["Location"]  # back to the same run's queue
+    r = c.get("/review/export?run=2026-10-23_124342_fresh")
+    assert "review_queue_2026-10-23_124342_fresh.xlsx" in r.headers["Content-Disposition"]

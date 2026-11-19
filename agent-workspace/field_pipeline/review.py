@@ -7,7 +7,10 @@ do, plus a log of the decisions people make on them.
 (run from agent-workspace/). The web app's Review page works on the same queue; --export / --import round-trip
 it through an Excel file for people who would rather work in a spreadsheet.
 
-A cell is in the queue when the newest pipeline decision for it is not a filled status, nothing else fills it
+The queue is per run (--run, or the Review page's run picker): the cells that run left unfilled. Without a run it
+covers every run, using the newest decision per cell.
+
+A cell is in the queue when the pipeline decision for it is not a filled status, nothing else fills it
 (another run, a value typed into the workbook, an earlier review), or when the monthly source check
 (health.py) found its source changed, missing or dead. Groups, in the order worth working through:
 
@@ -129,8 +132,47 @@ def item_id(sheet: str, row: int, field: str) -> str:
     return f"{sheet}|{row}|{field}"
 
 
-def build_queue(workbook: Path, prior: Path | None = None, db: Path | None = None) -> list[dict]:
-    """The review queue, most useful groups first, then by sheet, school and field."""
+def run_id(path: Path) -> str:
+    """A run's id: its version folder name ("base" for the decisions.csv written before versioned runs)."""
+    return "base" if path.parent.name.endswith("_field_pipeline") else path.parent.name
+
+
+def list_runs(workbook: Path) -> list[dict]:
+    """Runs with a decisions.csv, newest first: {"id", "label"}, labelled from runs.csv when it lists them."""
+    from knowledge_base.__main__ import versions
+    workbook = Path(workbook)
+    index = workbook.with_name(f"{workbook.stem}_field_pipeline") / "runs.csv"
+    info = {}
+    if index.exists():
+        with open(index, newline="", encoding="utf-8") as f:
+            info = {r["version"]: r for r in csv.DictReader(f)}
+    out = []
+    for path in reversed(versions(workbook)):
+        rid = run_id(path)
+        m = re.match(r"(\d{4}-\d\d-\d\d)_(\d\d)(\d\d)\d\d(.*)", rid)
+        label = (f"{m.group(1)} {m.group(2)}:{m.group(3)}" + (" (fresh)" if "fresh" in m.group(4) else "")
+                 if m else "Earliest run")
+        if r := info.get(rid):
+            sheets = r.get("sheets") or "all"
+            label += f" · {'all programs' if sheets == 'all' else sheets}"
+            if r.get("only"):
+                label += f" · {r['only']}"
+            if r.get("rows"):
+                label += f" · {r['rows']} row{'s' if r['rows'] != '1' else ''}"
+        out.append({"id": rid, "label": label})
+    return out
+
+
+def build_queue(workbook: Path, prior: Path | None = None, db: Path | None = None, run: str | None = None) -> list[dict]:
+    """The review queue's items (see `queue`)."""
+    return queue(workbook, prior, db, run)["items"]
+
+
+def queue(workbook: Path, prior: Path | None = None, db: Path | None = None, run: str | None = None) -> dict:
+    """{"items", "run", "filled_elsewhere", "reviewed", "cells"}: the review queue, most useful groups first, then by sheet,
+    school and field. run = a run id (list_runs): only the cells that run left unfilled, and only changed sources
+    whose value came from that run; None = every run, the newest result per cell. Cells already reviewed, or filled
+    since by another run or the workbook, are left out and counted."""
     from knowledge_base.__main__ import attach_health, build, versions  # knowledge_base imports field_pipeline
     from .store import DEFAULT_DB
     workbook = Path(workbook)
@@ -138,6 +180,9 @@ def build_queue(workbook: Path, prior: Path | None = None, db: Path | None = Non
         olds = sorted(workbook.parent.glob("OLD *.xlsx"))
         prior = olds[0] if len(olds) == 1 else None
     files = versions(workbook)
+    scope = [p for p in files if run is None or run_id(p) == run]
+    if run is not None and not scope:
+        raise ValueError(f"no run '{run}'")
     kb = build(str(workbook), str(prior) if prior else None, files)
     attach_health(kb, db or DEFAULT_DB)
     programs = {p["id"]: p for p in kb["programs"]}
@@ -149,17 +194,23 @@ def build_queue(workbook: Path, prior: Path | None = None, db: Path | None = Non
     by_row = {(p["sheet"], p["row"]): p for p in kb["programs"] if p.get("row")}
 
     reviewed = load_reviews(workbook)
-    latest: dict[tuple[str, int, str], dict] = {}  # newest pipeline decision per cell
-    for path in files:
+    latest: dict[tuple[str, int, str], dict] = {}  # newest pipeline decision per cell, within the scope
+    for path in scope:
         with open(path, newline="", encoding="utf-8") as fh:
             for d in csv.DictReader(fh):
-                latest[(d["sheet"], int(d["row"]), d["field"])] = {**d, "run": path.parent.name}
+                latest[(d["sheet"], int(d["row"]), d["field"])] = {**d, "run": run_id(path)}
 
-    items = []
+    items, elsewhere, done = [], 0, 0
     for key, d in latest.items():
         fact, p = facts.get(key, (None, by_row.get(key[:2])))
-        if d["status"] in FILLED or p is None or key in reviewed or (fact and fact["s"] != "prior-year"):
-            continue  # filled by this run, another run, the workbook or a review
+        if d["status"] in FILLED or p is None:
+            continue
+        if key in reviewed:
+            done += 1
+            continue
+        if fact and fact["s"] != "prior-year":
+            elsewhere += 1  # another run or the workbook has a value: nothing to review
+            continue
         last = fact if fact and fact["s"] == "prior-year" else None
         items.append({"group": group_of(d["field"], d["status"], d.get("value") or ""), "status": d["status"],
                       "value": d.get("value") or "", "quote": d.get("quote") or "", "url": d.get("source_url") or "",
@@ -168,17 +219,20 @@ def build_queue(workbook: Path, prior: Path | None = None, db: Path | None = Non
                       "last_year": last["v"] if last else "", "last_year_url": last["u"] if last else ""}
                      | _where(p, key))
     for key, (fact, p) in facts.items():  # values whose source the monthly check flagged
-        if fact.get("h") in ("changed", "missing", "dead") and fact["s"] != "prior-year":
-            items.append({"group": "stale", "status": fact["s"], "value": fact["v"], "quote": fact.get("q") or "",
-                          "url": fact.get("u") or "", "detail": f"source {fact['h']} (checked {fact.get('ht')})",
-                          "why": {"changed": "the source page now says something different",
-                                  "missing": "the source page no longer has the quote",
-                                  "dead": "the source page is gone"}[fact["h"]] + f" (checked {fact.get('ht')})",
-                          "snippet": fact.get("hn") or "", "run": "", "last_year": "", "last_year_url": ""}
-                         | _where(p, key))
+        if fact.get("h") not in ("changed", "missing", "dead") or fact["s"] == "prior-year":
+            continue
+        if run is not None and not ((d := latest.get(key)) and d["status"] in FILLED and d["value"] == fact["v"]):
+            continue  # this value did not come from the chosen run
+        items.append({"group": "stale", "status": fact["s"], "value": fact["v"], "quote": fact.get("q") or "",
+                      "url": fact.get("u") or "", "detail": f"source {fact['h']} (checked {fact.get('ht')})",
+                      "why": {"changed": "the source page now says something different",
+                              "missing": "the source page no longer has the quote",
+                              "dead": "the source page is gone"}[fact["h"]] + f" (checked {fact.get('ht')})",
+                      "snippet": fact.get("hn") or "", "run": run or "", "last_year": "", "last_year_url": ""}
+                     | _where(p, key))
     order = list(GROUPS)
     items.sort(key=lambda i: (order.index(i["group"]), i["sheet"], i["university"], i["row"], i["field"]))
-    return items
+    return {"items": items, "run": run, "filled_elsewhere": elsewhere, "reviewed": done, "cells": set(latest)}
 
 
 def _where(p: dict, key: tuple) -> dict:
@@ -315,20 +369,29 @@ def main() -> None:
     ap.add_argument("--reviewer", default="", help="your name, stored with imported decisions")
     ap.add_argument("--prior", type=Path, help="last year's workbook (default: the one OLD *.xlsx next to it)")
     ap.add_argument("--db", type=Path, help="field_pipeline SQLite with source health checks")
+    ap.add_argument("--run", help="only this run's cells (its version folder name, or 'latest'); default every run")
+    ap.add_argument("--list-runs", action="store_true", help="list the runs and exit")
     args = ap.parse_args()
     wb = args.xlsx.resolve()
-    items = build_queue(wb, args.prior, args.db)
+    runs = list_runs(wb)
+    if args.list_runs:
+        for r in runs:
+            print(f"{r['id']:28} {r['label']}")
+        return
+    run = (runs[0]["id"] if runs else None) if args.run == "latest" else args.run
+    items = build_queue(wb, args.prior, args.db, run)
     if args.import_:
         reviews, problems = import_xlsx(args.import_, items, args.reviewer)
         append_reviews(wb, reviews)
         print(f"{len(reviews)} decision(s) -> {reviews_path(wb)}")
         for p in problems:
             print(f"  skipped {p}")
-        items = build_queue(wb, args.prior, args.db)
+        items = build_queue(wb, args.prior, args.db, run)
     counts = {GROUPS[g]: sum(i["group"] == g for i in items) for g in GROUPS}
     print(f"{len(items)} cell(s) to review: " + ", ".join(f"{g} {n}" for g, n in counts.items() if n))
     if args.export is not None:
-        dest = Path(args.export) if args.export else wb.with_name(f"{wb.stem}_field_pipeline") / "review_queue.xlsx"
+        name = f"review_queue_{run}.xlsx" if run else "review_queue.xlsx"
+        dest = Path(args.export) if args.export else wb.with_name(f"{wb.stem}_field_pipeline") / name
         print(f"queue -> {export_xlsx(items, dest)}")
 
 

@@ -2,6 +2,17 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-19: Review queue by run
+
+The review queue used to merge every run, taking the newest result for each cell, so a reviewer couldn't work
+through what one run left behind. It is now built per run: the Review page opens on the newest run and has a run
+picker, labelled from runs.csv with date, programs and row count, plus an "All runs" option that keeps the old
+merged view. A run's queue holds the cells that run left unfilled, and under "Source changed" only values that came
+from that run. Cells another run or the workbook has filled since are left out and counted on the page. Filters,
+decisions, undo and the Excel round trip all stay on the selected run, and the export is named after it. On the
+command line, `field_pipeline.review` gains `--run` (a version folder or `latest`) and `--list-runs`.
+`review.queue()` returns the items with those counts, and `build_queue()` keeps returning just the items.
+
 ## 2026-11-19: Stop runs whose sheet and school filters match nothing
 
 A run for a school that isn't on any of the selected sheets used to finish as "done" with 0 rows and 0 cells,

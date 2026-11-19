@@ -149,3 +149,30 @@ def test_excel_round_trip(wb, tmp_path):
         ("Average GMAT", "accept", "650"), ("Ranking (QS)", "not-ranked", "Not ranked")]
     assert len(problems) == 1 and "Female %" in problems[0] and "type the value" in problems[0]
     assert all(r["reviewer"] == "Excel" for r in rows)
+
+
+def test_queue_by_run(wb):
+    run2 = wb.parent / f"{wb.stem}_field_pipeline" / "runs" / "2026-11-19_090000_fresh"
+    run2.mkdir(parents=True)
+    with open(run2 / "decisions.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, DECISION_COLUMNS)
+        w.writeheader()
+        w.writerow({"sheet": "MS HRM", "row": 3, "university": "GEORGE WASHINGTON UNIVERSITY", "program": "",
+                    "field": "Female %", "status": "found", "cycle": "", "value": "41%", "source_url": URL,
+                    "quote": "41% of the class are women", "detail": ""})
+        w.writerow({"sheet": "MS HRM", "row": 3, "university": "GEORGE WASHINGTON UNIVERSITY", "program": "",
+                    "field": "Class Size", "status": "not-found", "cycle": "", "value": "", "source_url": "",
+                    "quote": "", "detail": ""})
+    runs = review.list_runs(wb)
+    assert [r["id"] for r in runs] == ["2026-11-19_090000_fresh", "2026-11-06_000000"]  # newest first
+    assert runs[0]["label"].startswith("2026-11-19 09:00 (fresh)")
+    db = wb.parent / "p.sqlite"
+    newest = review.queue(wb, db=db, run="2026-11-19_090000_fresh")
+    assert {(i["row"], i["field"]) for i in newest["items"]} == {(3, "Class Size")}
+    first = review.queue(wb, db=db, run="2026-11-06_000000")
+    assert (3, "Female %") not in {(i["row"], i["field"]) for i in first["items"]}  # filled by the newer run (GWU Credit Hours: typed in the workbook)
+    assert first["filled_elsewhere"] == 2 and (2, "Average GMAT") in {(i["row"], i["field"]) for i in first["items"]}
+    every = review.queue(wb, db=db)
+    assert {(3, "Class Size"), (2, "Average GMAT")} <= {(i["row"], i["field"]) for i in every["items"]}
+    with pytest.raises(ValueError, match="no run"):
+        review.queue(wb, db=db, run="nope")

@@ -198,25 +198,42 @@ def health_recheck():
     return redirect(url_for("run_view", run_id=run.id))
 
 
-_queue_cache: dict = {"key": None, "items": []}
+_queue_cache: dict = {"key": None, "by_run": {}}
 _queue_lock = threading.Lock()
 
 
-def _queue(xlsx: Path) -> list[dict]:
-    """The review queue, rebuilt only when its inputs change (runs, the workbook, reviews, health checks)."""
+def _queue(xlsx: Path, run: str | None) -> dict:
+    """The review queue for one run (None = every run), rebuilt only when its inputs change (runs, the workbook,
+    reviews, health checks)."""
     base = xlsx.with_name(f"{xlsx.stem}_field_pipeline")
     inputs = [xlsx, review.reviews_path(xlsx), DEFAULT_DB, *sorted(base.glob("runs/*/decisions.csv"))]
     key = tuple((str(p), p.stat().st_mtime if p.exists() else 0) for p in inputs)
     with _queue_lock:
         if _queue_cache["key"] != key:
-            _queue_cache.update(key=key, items=review.build_queue(xlsx))
-        return _queue_cache["items"]
+            _queue_cache.update(key=key, by_run={})
+        if run not in _queue_cache["by_run"]:
+            _queue_cache["by_run"][run] = review.queue(xlsx, run=run)
+        return _queue_cache["by_run"][run]
+
+
+def _run_choice(xlsx: Path) -> tuple[str, list[dict]]:
+    """("all" or a run id, the runs newest first); the newest run when none is asked for."""
+    runs = review.list_runs(xlsx)
+    src = request.form if request.method == "POST" else request.args
+    asked = src.get("run", "")
+    if asked == "all" or asked in {r["id"] for r in runs}:
+        return asked, runs
+    return (runs[0]["id"] if runs else "all"), runs
+
+
+def _scope(choice: str) -> str | None:
+    return None if choice == "all" else choice
 
 
 def _review_args() -> dict:
     """The filters to come back to after a decision."""
     src = request.form if request.method == "POST" else request.args
-    return {k: src.get(k) for k in ("group", "sheet", "q") if src.get(k)}
+    return {k: src.get(k) for k in ("run", "group", "sheet", "q") if src.get(k)}
 
 
 @app.get("/review")
@@ -224,23 +241,28 @@ def review_index():
     xlsx = _xlsx()
     if not xlsx:
         return render_template("review.html", xlsx=None)
-    items = _queue(xlsx)
+    run, runs = _run_choice(xlsx)
+    result = _queue(xlsx, _scope(run))
+    items = result["items"]
     sheet, q = request.args.get("sheet", ""), request.args.get("q", "").strip().casefold()
     shown = [i for i in items if (not sheet or i["sheet"] == sheet) and (not q or q in i["university"].casefold())]
     counts = Counter(i["group"] for i in shown)
-    reviewed = sorted(review.load_reviews(xlsx).values(), key=lambda r: r["at"], reverse=True)
+    reviewed = sorted((r for key, r in review.load_reviews(xlsx).items() if run == "all" or key in result["cells"]),
+                      key=lambda r: r["at"], reverse=True)
     group = request.args.get("group") or next((g for g in review.GROUPS if counts[g]), "candidate")
     return render_template("review.html", xlsx=xlsx, groups=review.GROUPS, choices=review.CHOICES, group=group,
                            counts=counts, items=[i for i in shown if i["group"] == group], total=len(shown),
                            sheets=sorted({i["sheet"] for i in items}), sheet=sheet, q=request.args.get("q", ""),
-                           reviewed=reviewed, reviewer=request.cookies.get("reviewer", ""),
+                           reviewed=reviewed, reviewer=request.cookies.get("reviewer", ""), run=run, runs=runs,
+                           filled_elsewhere=result["filled_elsewhere"],
                            msg=request.args.get("msg", ""), error=request.args.get("error", ""))
 
 
 @app.post("/review/decide")
 def review_decide():
     xlsx = _xlsx()
-    item = next((i for i in _queue(xlsx) if i["id"] == request.form.get("id")), None) if xlsx else None
+    item = (next((i for i in _queue(xlsx, _scope(_run_choice(xlsx)[0]))["items"] if i["id"] == request.form.get("id")),
+                 None) if xlsx else None)
     if item is None:
         return redirect(url_for("review_index", **_review_args(), error="That cell is no longer in the queue."))
     try:
@@ -279,9 +301,11 @@ def review_export():
     xlsx = _xlsx()
     if not xlsx:
         abort(400, "no workbook")
-    dest = xlsx.with_name(f"{xlsx.stem}_field_pipeline") / "review_queue.xlsx"
-    review.export_xlsx(_queue(xlsx), dest)
-    return send_file(dest, as_attachment=True, download_name="review_queue.xlsx")
+    run = _run_choice(xlsx)[0]
+    name = "review_queue.xlsx" if run == "all" else f"review_queue_{run}.xlsx"
+    dest = xlsx.with_name(f"{xlsx.stem}_field_pipeline") / name
+    review.export_xlsx(_queue(xlsx, _scope(run))["items"], dest)
+    return send_file(dest, as_attachment=True, download_name=name)
 
 
 @app.post("/review/import")
@@ -289,18 +313,19 @@ def review_import():
     xlsx = _xlsx()
     upload = request.files.get("file")
     if not xlsx or not upload or not upload.filename:
-        return redirect(url_for("review_index", error="Choose the filled-in review_queue.xlsx first."))
+        return redirect(url_for("review_index", **_review_args(), error="Choose the filled-in review_queue.xlsx first."))
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "import.xlsx"
         upload.save(path)
         try:
-            rows, problems = review.import_xlsx(path, _queue(xlsx), request.cookies.get("reviewer", ""))
+            rows, problems = review.import_xlsx(path, _queue(xlsx, _scope(_run_choice(xlsx)[0]))["items"],
+                                                request.cookies.get("reviewer", ""))
         except Exception as exc:  # not an export of the queue
-            return redirect(url_for("review_index", error=f"Could not read that file: {exc}"))
+            return redirect(url_for("review_index", **_review_args(), error=f"Could not read that file: {exc}"))
     review.append_reviews(xlsx, rows)
     note = f"Imported {len(rows)} decision(s)." + (f" Skipped {len(problems)}: " + "; ".join(problems[:5])
                                                      if problems else "")
-    return redirect(url_for("review_index", msg=note))
+    return redirect(url_for("review_index", **_review_args(), msg=note))
 
 
 @app.get("/knowledge")
