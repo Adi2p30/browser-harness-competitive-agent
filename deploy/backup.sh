@@ -12,13 +12,10 @@ TMP="$DIR/.prod-$$.tmp"
 
 mkdir -p -- "$DIR"
 trap 'rm -f -- "$TMP"' EXIT
-if command -v sqlite3 >/dev/null 2>&1; then
-  sqlite3 "$PROD_DB" ".backup '$TMP'"
-else
-  python3 -c 'import sqlite3, sys
+# SQLite's online backup API; the paths go in as arguments, never into a command string.
+python3 -c 'import sqlite3, sys
 src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
 src.backup(dst); dst.close(); src.close()' "$PROD_DB" "$TMP"
-fi
 mv -f -- "$TMP" "$DEST"
 
 # Names sort by date: delete all but the newest $KEEP.

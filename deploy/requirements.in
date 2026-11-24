@@ -1,0 +1,8 @@
+# Direct dependencies of the hosted site. Pin and hash with the command in deploy/README.md.
+flask
+waitress
+openpyxl
+beautifulsoup4
+requests
+pypdf
+pyyaml
