@@ -24,8 +24,12 @@ Tables:
 `apply_changes` publishes a batch in one `BEGIN IMMEDIATE` transaction. Each change carries the
 `old` (value, status) it was based on. It applies only if the stored fact still matches;
 otherwise it comes back as a conflict, with the current fact and who last changed it. The
-rest of the batch still applies. The version goes up by one only when something applied, and
-`backup_dir` keeps a copy of the database from before the publish.
+rest of the batch still applies. A malformed batch raises ValueError before anything is
+written. That covers a non-string value, a repeated (program, field) and an unknown program.
+The version goes up by one only when something applied. With `backup_dir`, the database is
+first copied to `prod-v<version>-<UTC time>.sqlite`, and the newest 50 copies are kept.
 
-Admin keys: `python -m prod.admins add|list|revoke <db> [name]`, run from `agent-workspace/`.
-`add` prints the key once; store it as `PROD_ADMIN_KEY` in `.env`.
+Admin keys: `python -m prod.admins add|rotate|list|revoke <db> [name]`, run from
+`agent-workspace/`. `add` creates an admin or reissues a revoked one. `rotate` replaces a key.
+Both print the key once; store it as `PROD_ADMIN_KEY` in `.env`. Only `add` creates the
+database file.

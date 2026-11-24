@@ -64,10 +64,11 @@ def _tx(conn: sqlite3.Connection, mode: str = "IMMEDIATE"):
     conn.execute(f"BEGIN {mode}")
     try:
         yield
+        conn.execute("COMMIT")
     except BaseException:
-        conn.execute("ROLLBACK")
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         raise
-    conn.execute("COMMIT")
 
 
 def version(conn: sqlite3.Connection) -> int:
@@ -120,14 +121,64 @@ def _current(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict | None:
     return {**dict(row), "by": last and last["by"], "at": last and last["at"]}
 
 
+def _text(x) -> bool:
+    return x is None or isinstance(x, str)
+
+
 def _check(changes: list[dict], conn: sqlite3.Connection) -> None:
+    """Raise ValueError for any malformed change, unknown program or repeated (program, field)."""
     known = {r[0] for r in conn.execute("SELECT id FROM programs")}
+    seen = set()
     for c in changes:
-        if c["program_id"] not in known:
-            raise ValueError(f"unknown program_id {c['program_id']!r}")
-        new = c["new"]
+        if not isinstance(c, dict):
+            raise ValueError(f"change must be a dict: {c!r}")
+        pid, field, old, new = c.get("program_id"), c.get("field"), c.get("old"), c.get("new")
+        where = f"change {pid!r}/{field!r}"
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid not in known:
+            raise ValueError(f"{where}: unknown program_id")
+        if not isinstance(field, str) or not field:
+            raise ValueError(f"{where}: field must be a non-empty string")
+        if (pid, field) in seen:
+            raise ValueError(f"{where}: appears twice in one batch")
+        seen.add((pid, field))
+        if "old" not in c or old is not None and not (
+                isinstance(old, dict) and {"value", "status"} <= old.keys() and _text(old["value"])
+                and _text(old["status"])):
+            raise ValueError(f"{where}: old must be None or {{value, status}} with string or null values")
+        if not isinstance(new, dict) or not all(_text(new.get(k)) for k in NEW_FIELDS):
+            raise ValueError(f"{where}: new must be a dict of strings or nulls over {NEW_FIELDS}")
         if not new.get("status") or new.get("origin") not in ORIGINS:
-            raise ValueError(f"change {c['program_id']}/{c['field']!r} needs a status and an origin in {ORIGINS}")
+            raise ValueError(f"{where}: new needs a status and an origin in {ORIGINS}")
+
+
+BACKUPS_KEPT = 50
+
+
+def backup(conn: sqlite3.Connection, backup_dir: Path) -> Path:
+    """Copy the database to backup_dir/prod-v<version>-<UTC time>.sqlite, named from the copy's own version so it
+    is never wrong, and never over an existing file. Keeps the newest BACKUPS_KEPT copies."""
+    backup_dir = Path(backup_dir)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    tmp = backup_dir / f".prod-backup-{secrets.token_hex(8)}.tmp"
+    try:
+        dest = sqlite3.connect(tmp)
+        try:
+            conn.backup(dest)  # outside any write transaction: backing up inside one blocks
+            v = version(dest)
+        finally:
+            dest.close()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path, n = backup_dir / f"prod-v{v}-{stamp}.sqlite", 1
+        while path.exists():
+            n += 1
+            path = backup_dir / f"prod-v{v}-{stamp}-{n}.sqlite"
+        tmp.rename(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    old = sorted(backup_dir.glob("prod-v*.sqlite"), key=lambda p: (p.stat().st_mtime_ns, p.name))
+    for p in old[:-BACKUPS_KEPT]:
+        p.unlink()
+    return path
 
 
 def apply_changes(conn: sqlite3.Connection, changes: list[dict], by: str, note: str = "",
@@ -136,16 +187,11 @@ def apply_changes(conn: sqlite3.Connection, changes: list[dict], by: str, note: 
     (None: no fact yet); otherwise it is returned as a conflict with the current fact and who last changed it.
     The version goes up by one when anything applied. Bad input raises ValueError before anything is written."""
     _check(changes, conn)
-    if backup_dir is not None:  # outside the write transaction: backing up inside one blocks
-        Path(backup_dir).mkdir(parents=True, exist_ok=True)
-        dest = sqlite3.connect(Path(backup_dir) / f"prod-v{version(conn)}.sqlite")
-        try:
-            conn.backup(dest)
-        finally:
-            dest.close()
+    if backup_dir is not None:
+        backup(conn, backup_dir)
     applied, conflicts = [], []
-    at = now()
     with _tx(conn):
+        at = now()
         current_version = version(conn)
         new_version = current_version + 1
         for c in changes:
@@ -191,13 +237,16 @@ def claim_request(conn: sqlite3.Connection, request_id: int, admin: str) -> bool
     return bool(row) and row["status"] == "claimed" and row["claimed_by"] == admin
 
 
-def set_request_status(conn: sqlite3.Connection, request_id: int, status: str, admin_note: str = "",
+def set_request_status(conn: sqlite3.Connection, request_id: int, status: str, admin_note: str | None = None,
                        program_id: int | None = None) -> None:
-    """Set a request's status and note; program_id (the program it became) is kept when not given."""
+    """Set a request's status. admin_note and program_id (the program it became) are kept when None; going back
+    to 'new' releases the claim."""
     if status not in REQUEST_STATUSES:
         raise ValueError(f"status must be one of {REQUEST_STATUSES}")
-    if not conn.execute("UPDATE requests SET status=?, admin_note=?, program_id=COALESCE(?, program_id) WHERE id=?",
-                        (status, admin_note, program_id, request_id)).rowcount:
+    if not conn.execute(
+            "UPDATE requests SET status=?1, admin_note=COALESCE(?2, admin_note), program_id=COALESCE(?3, program_id),"
+            " claimed_by=CASE WHEN ?1='new' THEN NULL ELSE claimed_by END WHERE id=?4",
+            (status, admin_note, program_id, request_id)).rowcount:
         raise ValueError(f"unknown request {request_id}")
 
 
@@ -207,14 +256,29 @@ def _hash(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-def add_admin(conn: sqlite3.Connection, name: str) -> str:
-    """Create an admin and return their key. Only its hash is stored, so this is the one time it is shown."""
+def _issue(conn: sqlite3.Connection, name: str, allow_active: bool) -> str:
     key = secrets.token_urlsafe(32)
-    try:
-        conn.execute("INSERT INTO admins(name, key_hash, created_at) VALUES(?,?,?)", (name, _hash(key), now()))
-    except sqlite3.IntegrityError:
-        raise ValueError(f"admin {name!r} already exists") from None
+    with _tx(conn):
+        row = conn.execute("SELECT revoked_at FROM admins WHERE name=?", (name,)).fetchone()
+        if row and row["revoked_at"] is None and not allow_active:
+            raise ValueError(f"admin {name!r} already exists")
+        if row is None and allow_active:
+            raise ValueError(f"no admin named {name!r}")
+        conn.execute("INSERT INTO admins(name, key_hash, created_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE"
+                     " SET key_hash=excluded.key_hash, created_at=excluded.created_at, revoked_at=NULL",
+                     (name, _hash(key), now()))
     return key
+
+
+def add_admin(conn: sqlite3.Connection, name: str) -> str:
+    """Create an admin, or reissue a revoked one, and return their key. Only its hash is stored, so this is the one
+    time it is shown. An active admin raises ValueError."""
+    return _issue(conn, name, allow_active=False)
+
+
+def rotate_admin(conn: sqlite3.Connection, name: str) -> str:
+    """Replace an existing admin's key (revoking the old one) and return the new key."""
+    return _issue(conn, name, allow_active=True)
 
 
 def revoke_admin(conn: sqlite3.Connection, name: str) -> bool:

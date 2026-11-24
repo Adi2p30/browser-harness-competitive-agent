@@ -1,8 +1,11 @@
 """Manage admin keys in the production database (run from agent-workspace/):
 
-    python -m prod.admins add <db> <name>      # prints the new key once
+    python -m prod.admins add <db> <name>      # new admin, or reissue a revoked one; prints the key once
+    python -m prod.admins rotate <db> <name>   # replace an admin's key; prints the new key once
     python -m prod.admins list <db>
     python -m prod.admins revoke <db> <name>
+
+Only `add` creates the database file.
 """
 import argparse
 import sys
@@ -14,16 +17,19 @@ from prod import db
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd, named in (("add", True), ("list", False), ("revoke", True)):
+    for cmd, named in (("add", True), ("rotate", True), ("list", False), ("revoke", True)):
         p = sub.add_parser(cmd)
         p.add_argument("db", type=Path)
         if named:
             p.add_argument("name")
     args = ap.parse_args(argv)
+    if args.cmd != "add" and not args.db.is_file():
+        print(f"no database at {args.db}", file=sys.stderr)
+        return 1
     conn = db.connect(args.db)
-    if args.cmd == "add":
+    if args.cmd in ("add", "rotate"):
         try:
-            key = db.add_admin(conn, args.name)
+            key = (db.add_admin if args.cmd == "add" else db.rotate_admin)(conn, args.name)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 1
