@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Request a school{% endblock %}
+{% block content %}
+<h1>Request a school</h1>
+{% if sent %}
+<p>Thanks. Your request was sent to the admins.</p>
+{% endif %}
+{% if error %}
+<p class="warn"><strong>{{ error }}</strong></p>
+{% endif %}
+<form method="post" action="{{ url_for('api.request_submit') }}" class="run-form">
+  <label>Program
+    {% if sheets %}
+    <select name="sheet" required>
+      <option value=""></option>
+      {% for s in sheets %}<option{% if form.sheet == s %} selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+    {% else %}
+    <input type="text" name="sheet" value="{{ form.sheet }}" required>
+    {% endif %}
+  </label>
+  <label>University <input type="text" name="university" value="{{ form.university }}" required></label>
+  <label>Program name <input type="text" name="program" value="{{ form.program }}"></label>
+  <label>Link <input type="url" name="link" value="{{ form.link }}"></label>
+  <label>Note <textarea name="note">{{ form.note }}</textarea></label>
+  <label style="display:none" aria-hidden="true">Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+  <button type="submit" class="gold">Send request</button>
+</form>
+{% endblock %}
