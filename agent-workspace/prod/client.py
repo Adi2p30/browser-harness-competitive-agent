@@ -11,17 +11,22 @@ through school requests. Run from agent-workspace/:
   python -m prod.client add-program --sheet S --university U [--school --program --link --request ID]
 
 PROD_URL and PROD_ADMIN_KEY come from the environment or the repo-root .env. Exit codes: 0 ok, 1 error,
-2 publish conflicts.
+3 publish conflicts.
 """
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
 TIMEOUT = 60
+PUBLISH_TIMEOUT = 300  # a publish backs up the database and rebuilds the knowledge bundle
+CONFLICTS = 3
+ENV = Path(__file__).resolve().parents[2] / ".env"
+LOCAL_HOSTS = ("localhost", "127.0.0.1")
 
 
 class ClientError(Exception):
@@ -30,29 +35,40 @@ class ClientError(Exception):
 
 class Client:
     def __init__(self, base_url: str, key: str, session=None):
-        self.base = base_url.rstrip("/")
+        if not key or any(c.isspace() or not c.isprintable() for c in key):
+            raise ClientError("PROD_ADMIN_KEY is empty or contains whitespace or a control character")
+        url = urlsplit(base_url)
+        if url.scheme != "https" and not (url.scheme == "http" and url.hostname in LOCAL_HOSTS):
+            raise ClientError(f"PROD_URL must be https (http only for {' or '.join(LOCAL_HOSTS)}): {base_url}")
+        self.base, self.key = base_url.rstrip("/"), key
         self.session = session or requests.Session()
         self.session.headers.update({"Authorization": f"Bearer {key}"})
 
-    def _call(self, method: str, path: str, body: dict | None = None, params: dict | None = None):
+    def _error(self, msg: str) -> ClientError:
+        return ClientError(msg.replace(self.key, "<key>"))
+
+    def _call(self, method: str, path: str, body: dict | None = None, params: dict | None = None,
+              timeout: int = TIMEOUT) -> dict:
         try:
-            r = self.session.request(method, self.base + path, json=body, params=params, timeout=TIMEOUT)
+            r = self.session.request(method, self.base + path, json=body, params=params, timeout=timeout)
         except requests.RequestException as e:
-            raise ClientError(f"{method} {path}: {e}") from e
+            raise self._error(f"{method} {path}: {e}") from None
         try:
             data = r.json()
         except ValueError:
             data = None
         if not 200 <= r.status_code < 300:
             msg = data.get("error") if isinstance(data, dict) else None
-            raise ClientError(f"{method} {path}: {r.status_code} {msg or r.text[:200]}")
+            raise self._error(f"{method} {path}: {r.status_code} {msg or r.text[:200]}")
+        if not isinstance(data, dict):
+            raise self._error(f"{method} {path}: {r.status_code} but the reply is not a JSON object: {r.text[:200]}")
         return data
 
     def export(self) -> dict:
         return self._call("GET", "/api/export")
 
     def publish(self, changes: list[dict], note: str = "") -> dict:
-        return self._call("POST", "/api/publish", {"changes": changes, "note": note})
+        return self._call("POST", "/api/publish", {"changes": changes, "note": note}, timeout=PUBLISH_TIMEOUT)
 
     def requests(self, status: str | None = None) -> list[dict]:
         return self._call("GET", "/api/requests", params={"status": status} if status else None)["requests"]
@@ -69,17 +85,16 @@ class Client:
 
 
 def setting(name: str) -> str:
-    """An environment variable, else its line in the repo-root .env (as field_pipeline.llm.api_key reads it)."""
-    if not os.environ.get(name):
-        env = Path(__file__).resolve().parents[2] / ".env"
-        if env.is_file():
-            for line in env.read_text().splitlines():
-                k, _, v = line.partition("=")
-                if k.strip() == name and v.strip():
-                    os.environ[name] = v.strip().strip("\"'")
-    if not os.environ.get(name):
+    """An environment variable, else its line in the repo-root .env (as field_pipeline.llm.api_key reads it);
+    surrounding whitespace and quotes are dropped."""
+    if not os.environ.get(name, "").strip() and ENV.is_file():
+        for line in ENV.read_text().splitlines():
+            k, _, v = line.partition("=")
+            if k.strip() == name and v.strip():
+                os.environ[name] = v.strip().strip("\"'")
+    if not (value := os.environ.get(name, "").strip()):
         raise ClientError(f"{name} missing: set it or add it to .env in the repo root")
-    return os.environ[name]
+    return value
 
 
 def snapshot_path(workbook: Path) -> Path:
@@ -98,6 +113,15 @@ def pull(client: Client, workbook: Path) -> dict:
     path = save_snapshot(workbook, snap)
     print(f"version {snap['version']}: {len(snap['programs'])} programs, {len(snap['facts'])} facts -> {path}")
     return snap
+
+
+def confirm(question: str) -> bool:
+    """Yes only for y/yes; EOF and Ctrl-C mean no."""
+    try:
+        return input(question).strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
 
 
 def print_conflicts(conflicts: list[dict], snap: dict) -> None:
@@ -124,7 +148,7 @@ def run(args, client: Client) -> int:
         print(f"against version {snap['version']}")
         print(format_diff(changes, snap))
         for p in unmapped:
-            print(f"not in production: {p['sheet']} · {p['university']} (row {p['row']})")
+            print(f"not in production: {p['sheet']} · {p['university']} (row {p['row']}): {p['reason']}")
     elif args.cmd == "publish":
         snap = pull(client, args.workbook)
         changes, _ = compare(args.workbook, snap)
@@ -132,14 +156,17 @@ def run(args, client: Client) -> int:
             print("Nothing to publish.")
             return 0
         print(format_diff(changes, snap))
-        if not args.yes and input(f"Publish {len(changes)} changes? [y/N] ").strip().lower() not in ("y", "yes"):
+        if not args.yes and not confirm(f"Publish {len(changes)} changes? [y/N] "):
             print("Not published.")
             return 0
         res = client.publish(changes, args.note)
         print(f"version {res['version']}: {len(res['applied'])} applied, {len(res['conflicts'])} conflict(s)")
         print_conflicts(res["conflicts"], snap)
-        pull(client, args.workbook)
-        return 2 if res["conflicts"] else 0
+        try:
+            pull(client, args.workbook)
+        except ClientError:
+            print(f"published (version {res['version']}); couldn't refresh the snapshot, run pull")
+        return CONFLICTS if res["conflicts"] else 0
     return 0
 
 
@@ -186,7 +213,8 @@ def main(argv: list[str] | None = None, session=None) -> int:
         elif args.cmd == "add-program":
             pid = client.add_program(sheet=args.sheet, university=args.university, school=args.school,
                                      program=args.program, link=args.link, request_id=args.request)
-            print(f"added program {pid}; run `python -m prod.client pull <workbook>` before the next diff")
+            print(f"added program {pid}. Add the school to your workbook with the same sheet, university and program"
+                  " name so the diff can match it, then run `python -m prod.client pull <workbook>`.")
         else:
             return run(args, client)
     except ClientError as e:

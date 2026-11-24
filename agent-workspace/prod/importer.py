@@ -4,7 +4,8 @@
 
 The knowledge base is built exactly as `python -m knowledge_base` builds it (every pipeline version, reviews.csv,
 the one OLD *.xlsx next to the workbook), so each (program, field) keeps the value that wins there. Programs get
-`legacy_key` "sheet:row"; schools only in last year's workbook are kept inactive with no key. The import writes no
+`legacy_key` "sheet:row"; schools only in last year's workbook are kept inactive with no key. A review decision
+"not-published" becomes a fact with that status and no value, as prod.diff publishes it. The import writes no
 fact_history rows: its publishes row is the record, and history starts with the first publish. A database that
 already has programs or publishes is refused.
 """
@@ -51,6 +52,16 @@ def runs(files: list[Path]) -> dict[tuple[str, int, str], str | None]:
     return out
 
 
+NOT_PUBLISHED_CYCLE = "2026-2027"
+
+
+def not_published(review: dict) -> dict:
+    """The fact (NEW_FIELDS) for a review decision "not-published"; the importer and prod.diff both write this."""
+    return {"value": None, "status": "not-published", "cycle": NOT_PUBLISHED_CYCLE,
+            "source_url": review["source_url"] or None, "quote": review["quote"] or None, "origin": "review",
+            "run": None, "reviewed_by": review["reviewer"] or None}
+
+
 FACT = (f"INSERT INTO facts(program_id, field, {', '.join(db.NEW_FIELDS)}, version)"
         f" VALUES({', '.join('?' * (len(db.NEW_FIELDS) + 3))})")  # a repeated (program, field) raises
 
@@ -92,17 +103,24 @@ def import_workbook(workbook: Path, db_path: Path, prior: Path | None = None, by
                 if p["lastYearOnly"]:
                     conn.execute("UPDATE programs SET active=0 WHERE id=?", (pid,))
                 ids[p["id"]] = pid
+            hidden = {k: rv for k, rv in reviews.items() if rv["decision"] == "not-published"}
             for f in kb["facts"]:
-                if (value := to_text(f["v"])) is None:
-                    continue
                 p = kb["programs"][f["p"]]
                 key = (p["sheet"], p["row"], f["f"])
+                if (value := to_text(f["v"])) is None or key in hidden:
+                    continue
                 o = origin(f["s"])
                 conn.execute(FACT, (
                     ids[f["p"]], f["f"], value, f["s"], f["c"] or None, f["u"] or None, f["q"] or None, o,
                     run_of.get(key) if o == "pipeline" else None,
                     (reviews[key]["reviewer"] or None) if o == "review" else None, 1))
                 origins[o] += 1
+            rows = {(p["sheet"], p["row"]): ids[p["id"]] for p in kb["programs"] if not p["lastYearOnly"]}
+            for (sheet, row, field), rv in sorted(hidden.items()):
+                if (sheet, row) in rows:
+                    conn.execute(FACT, (rows[(sheet, row)], field,
+                                        *(not_published(rv)[k] for k in db.NEW_FIELDS), 1))
+                    origins["review"] += 1
             conn.execute("INSERT INTO publishes(version, at, by, n_applied, n_conflicts, note) VALUES(1,?,?,?,0,?)",
                          (db.now(), by, sum(origins.values()), f"initial import from {workbook.name}"))
     finally:

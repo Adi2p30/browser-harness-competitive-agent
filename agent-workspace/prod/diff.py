@@ -4,9 +4,11 @@ snapshot of the production database (GET /api/export).
 Only facts a person or the pipeline produced are published: KB status "reviewed" (origin review) or a pipeline
 status in FILLED (origin pipeline). Values typed into the workbook ("entered") and last year's values
 ("prior-year") came in with the import and are never published from here. A review decision "not-published" is
-published as status "not-published" with no value. Nothing else is ever removed.
+published as status "not-published" with no value, exactly as the importer writes it. Nothing else is removed.
+
+Local programs match production ones by legacy_key "sheet:row" when the university names agree; a program added
+through the API (no legacy_key) matches by sheet, university and program name when exactly one does.
 """
-import csv
 from collections import defaultdict
 from pathlib import Path
 
@@ -14,27 +16,10 @@ from field_pipeline.fields import FILLED
 from field_pipeline.review import load_reviews
 from knowledge_base.__main__ import build, versions
 
+from .importer import find_prior, not_published, origin, runs
 from .values import to_text
 
-REVIEWED_CYCLE = "2026-2027"
-
-
-def default_prior(workbook: Path) -> Path | None:
-    """Last year's workbook as knowledge_base.main() finds it: the one OLD *.xlsx next to this one."""
-    olds = sorted(workbook.parent.glob("OLD *.xlsx"))
-    return olds[0] if len(olds) == 1 else None
-
-
-def runs(files: list[Path]) -> dict[tuple[str, int, str], str | None]:
-    """{(sheet, row, field): version folder} of the run whose filled value the KB uses (the newest, as in
-    knowledge_base.decisions); None for the unversioned decisions.csv."""
-    out = {}
-    for path in files:
-        run = path.parent.name if path.parent.parent.name == "runs" else None
-        with open(path, newline="", encoding="utf-8") as f:
-            out.update({(d["sheet"], int(d["row"]), d["field"]): run for d in csv.DictReader(f)
-                        if d["status"] in FILLED})
-    return out
+COMPARED = ("value", "status", "cycle", "source_url", "quote")  # run and reviewed_by alone are not a change
 
 
 def _new(value, status, cycle, source_url, quote, origin, run=None, reviewed_by=None) -> dict:
@@ -42,57 +27,70 @@ def _new(value, status, cycle, source_url, quote, origin, run=None, reviewed_by=
             "quote": quote or None, "origin": origin, "run": run, "reviewed_by": reviewed_by or None}
 
 
+def _norm(s) -> str:
+    return " ".join(str(s or "").split()).casefold()
+
+
+def match(programs: list[dict], snapshot: dict) -> tuple[dict, list[dict]]:
+    """({(sheet, row): production id}, unmapped local programs each with a "reason")."""
+    by_key = {p["legacy_key"]: p for p in snapshot["programs"] if p.get("legacy_key")}
+    keyless = defaultdict(list)
+    for p in snapshot["programs"]:
+        if not p.get("legacy_key") and p.get("active", 1):
+            keyless[(p["sheet"], _norm(p["university"]), _norm(p["program"]))].append(p)
+    ids, unmapped, taken = {}, [], set()
+    for p in programs:
+        if p["lastYearOnly"]:
+            continue
+        if (target := by_key.get(f"{p['sheet']}:{p['row']}")) is not None:
+            if _norm(target["university"]) != _norm(p["university"]):
+                unmapped.append({**p, "reason": f"production row {target['legacy_key']} is {target['university']}"})
+                continue
+        else:
+            found = keyless.get((p["sheet"], _norm(p["university"]), _norm(p["program"])), [])
+            if len(found) != 1 or found[0]["id"] in taken:
+                why = "more than one" if found else "no"
+                unmapped.append({**p, "reason": f"{why} production program with this sheet, university and program"})
+                continue
+            target = found[0]
+        taken.add(target["id"])
+        ids[(p["sheet"], p["row"])] = target["id"]
+    return ids, unmapped
+
+
 def compare(workbook: Path, snapshot: dict, prior: Path | None = None) -> tuple[list[dict], list[dict]]:
     """(changes, unmapped). changes are in prod.db's change format; unmapped are the local programs (with a workbook
-    row) that have no production program with legacy_key "sheet:row"."""
+    row) that match no production program, each with a "reason"."""
     workbook = Path(workbook)
-    prior = prior or default_prior(workbook)
+    prior = prior or find_prior(workbook)
     files = versions(workbook)
     reviews = load_reviews(workbook)
     kb = build(str(workbook), str(prior) if prior else None, files, reviews)
     run_of = runs(files)
-    prod = {p["legacy_key"]: p for p in snapshot["programs"] if p.get("legacy_key")}
+    ids, unmapped = match(kb["programs"], snapshot)
     stored = {(f["program_id"], f["field"]): f for f in snapshot["facts"]}
-
-    def old(pid, field):
-        f = stored.get((pid, field))
-        return {"value": f["value"], "status": f["status"]} if f else None
-
-    by_row, unmapped = {}, []
-    for p in kb["programs"]:
-        if p["lastYearOnly"]:
-            continue
-        if (target := prod.get(f"{p['sheet']}:{p['row']}")) is None:
-            unmapped.append(p)
-        else:
-            by_row[(p["sheet"], p["row"])] = target["id"]
-    hidden = {k for k, rv in reviews.items() if rv["decision"] == "not-published"}
+    hidden = {k: rv for k, rv in reviews.items() if rv["decision"] == "not-published"}
 
     changes = []
+
+    def offer(pid: int, field: str, new: dict) -> None:
+        old = stored.get((pid, field))
+        if old is None or any(old[k] != new[k] for k in COMPARED):
+            changes.append({"program_id": pid, "field": field,
+                            "old": old and {"value": old["value"], "status": old["status"]}, "new": new})
+
     for f in kb["facts"]:
         p = kb["programs"][f["p"]]
         key = (p["sheet"], p["row"], f["f"])
-        pid = by_row.get(key[:2])
-        if pid is None or key in hidden:
+        if (pid := ids.get(key[:2])) is None or key in hidden or not (f["s"] == "reviewed" or f["s"] in FILLED):
             continue
-        if f["s"] == "reviewed":
-            rv = reviews[key]
-            new = _new(f["v"], "reviewed", f["c"], f["u"], f["q"], "review", reviewed_by=rv["reviewer"])
-        elif f["s"] in FILLED:
-            new = _new(f["v"], f["s"], f["c"], f["u"], f["q"], "pipeline", run=run_of.get(key))
-        else:
-            continue
-        o = old(pid, f["f"])
-        if o is None or (o["value"], o["status"]) != (new["value"], new["status"]):
-            changes.append({"program_id": pid, "field": f["f"], "old": o, "new": new})
-    for key in sorted(hidden):
-        if (pid := by_row.get(key[:2])) is None:
-            continue
-        o, rv = old(pid, key[2]), reviews[key]
-        if o is None or o["status"] != "not-published":
-            changes.append({"program_id": pid, "field": key[2], "old": o,
-                            "new": _new(None, "not-published", REVIEWED_CYCLE, rv["source_url"], rv["quote"],
-                                        "review", reviewed_by=rv["reviewer"])})
+        o = origin(f["s"])
+        offer(pid, f["f"], _new(f["v"], f["s"], f["c"], f["u"], f["q"], o,
+                                run=run_of.get(key) if o == "pipeline" else None,
+                                reviewed_by=reviews[key]["reviewer"] if o == "review" else None))
+    for key, rv in sorted(hidden.items()):
+        if (pid := ids.get(key[:2])) is not None:
+            offer(pid, key[2], not_published(rv))
     return changes, unmapped
 
 
