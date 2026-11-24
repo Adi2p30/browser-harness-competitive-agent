@@ -28,6 +28,8 @@ from field_pipeline.workbook import read_rows, selection_notes  # noqa: E402
 from knowledge_base.okf_format import read_concept  # noqa: E402
 
 app = Flask(__name__)
+from api import bp as api_bp  # noqa: E402
+app.register_blueprint(api_bp)
 
 KNOWLEDGE = ROOT / "docs" / "okf" / "knowledge"
 _runs: dict[str, Run] = {}
