@@ -1,0 +1,37 @@
+# systemd unit for the hosted site. Replace every @PLACEHOLDER@, copy to /etc/systemd/system/, see deploy/README.md.
+#   @USER@        account that owns the checkout and the database
+#   @REPO@        absolute path of the checkout
+#   @ENV_FILE@    the env file (PROD_DB, PROD_BACKUP_DIR, ...)
+#   @DB_DIR@      the folder holding PROD_DB (SQLite writes its -wal and -shm files next to it)
+#   @BACKUP_DIR@  PROD_BACKUP_DIR
+#   @UV@          absolute path of uv (`command -v uv`)
+[Unit]
+Description=Purdue competitive analysis site (waitress, one process)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+EnvironmentFile=@ENV_FILE@
+Environment=UV_CACHE_DIR=%C/prod-public PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=@UV@ run --no-project --with waitress --with flask --with openpyxl --with beautifulsoup4 --with requests --with pypdf --with pyyaml python deploy/serve.py
+Restart=on-failure
+RestartSec=5
+
+CacheDirectory=prod-public
+ReadWritePaths=@DB_DIR@ @BACKUP_DIR@ @REPO@/docs/okf/knowledge
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
