@@ -2,6 +2,22 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-24: Programs identified by production id, and a hosting kit
+
+Once an admin has pulled the production snapshot, the pipeline works on production programs by their permanent id
+instead of by sheet and Excel row, so reordering or renaming workbook rows no longer detaches results, reviews or
+health checks, and programs added through the site (which have no workbook row) can be researched and published.
+`--program <id>` replaces `--row`, and `field_pipeline.schools` is gone in favour of `prod.client add-program`.
+decisions.csv, reviews.csv, recheck.csv and health.csv gain a `program_id` column at the end; existing reviews.csv
+and runs.csv files get the new header once, through a temp file and rename with a `.pre-program-id` backup, and
+every existing row is kept byte for byte. Old rows map to programs by their sheet and row only when the university
+still matches. The first run with a snapshot moves pipeline.sqlite's stored results to the new keys (there is no
+rollback, so older checkouts must not share that file). Without a snapshot the pipeline behaves as before. On the
+real data the knowledge base, review queue and health check are identical in both modes and a fresh import shows no
+changes to publish. Separately, `deploy/` adds what the hosted site needs: a waitress entry point that refuses to
+start while admin-only pages exist, a hardened systemd unit running from a hash-checked virtualenv, nightly
+backups, allowlisting nginx and Apache examples, and a step-by-step runbook.
+
 ## 2026-11-24: Import, export, a server API and an admin client for the production database
 
 The production database can now be filled, served and published to. `python -m prod.importer` loads the workbook,

@@ -11,6 +11,7 @@ title: Components
   - [prod-exporter](/okf/project/components/prod-exporter.md) — knowledge pages and the Excel workbook built from the database
   - [prod-api](/okf/project/components/prod-api.md) — the hosted server's admin-key API and the public school-request form
   - [prod-client](/okf/project/components/prod-client.md) — the admin's pull / diff / publish and request commands
+  - [deploy](/okf/project/components/deploy.md) — hosting the public site: waitress, systemd, proxy examples, backups, runbook
 - [knowledge_base](/okf/project/components/knowledge-base.md) — workbook + pipeline results → report + OKF bundle
 - [browser-harness-core](/okf/project/components/browser-harness-core.md) — the CDP layer field_pipeline browses through (one table of modules, not a concept per module)
 - [repository](/okf/project/components/repository.md) — the whole checkout's top-level layout, one table

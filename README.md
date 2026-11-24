@@ -35,11 +35,16 @@ Writes `<workbook>_kb/competitive_analysis.html` (open in any browser) and
 See [`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md) for
 every flag; the web app's run form covers the common ones.
 
-## Adding a school (maintainers)
+## Production database (admins)
 
-A competitor that isn't in the workbook is added from the command line with `python -m field_pipeline.schools`,
-not from the web app. It's saved beside the workbook in `*.added_schools.csv`, not in the workbook itself; see
-[`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md#schools-that-arent-in-the-workbook-maintainers).
+The workbook is being replaced as the source of truth by a production database owned by the hosted site. Every
+program has a permanent id, and every value keeps its source, quote and change history. Admins research on their
+own laptops and publish to the site with `python -m prod.client` (pull, diff, publish); new schools come in as
+requests or through `python -m prod.client add-program`. Once an admin has pulled, the pipeline works on production
+programs by id and the workbook is only a template. See
+[`docs/okf/project/components/prod-client.md`](docs/okf/project/components/prod-client.md),
+[`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md#production-programs-admins)
+and, for hosting, [`deploy/README.md`](deploy/README.md).
 
 ## Review queue
 
