@@ -2,6 +2,22 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-24: Import, export, a server API and an admin client for the production database
+
+The production database can now be filled, served and published to. `python -m prod.importer` loads the workbook,
+every run's decisions, the review decisions and last year's workbook into an empty database as version 1, in the same
+order of precedence the knowledge base uses. On the real data that is 313 programs, 80 last-year-only programs kept
+but hidden, and 4,411 values, each matching the knowledge base exactly. The hosted app gains an admin-key API
+(`webapp/api.py`): export a snapshot, publish changes with per-value conflict checks, work through school requests
+and add programs. It also gains a public "request a school" form with a size cap, a per-visitor rate limit and
+cleaned input. After each publish the server rebuilds the knowledge pages from the database
+(`knowledge_base.from_db`), and `python -m prod.exporter` writes the database back into the workbook layout for
+anyone who wants a spreadsheet. Admins use `python -m prod.client` to pull, see what would change, and publish after
+confirming. Only pipeline and reviewed values are published, never typed-in or last-year ones. A fresh import
+followed by a diff shows no changes. Rows are matched by sheet and row and checked against the university's name,
+so a reordered workbook can't publish to the wrong school. Programs created through the API are matched by sheet,
+university and program.
+
 ## 2026-11-24: A production database to replace the workbook as the source of truth
 
 The workbook identifies a school by its sheet and row number, so sorting or inserting rows detaches every run, review

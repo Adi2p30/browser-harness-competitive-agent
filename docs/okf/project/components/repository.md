@@ -13,9 +13,9 @@ status: stable
 |---|---|
 | `README.md` | entry point: what this tool does, how to run it |
 | `run-webapp.sh` | launches [webapp](/okf/project/components/webapp.md) via `uv` |
-| `webapp/` | the Flask app — see [webapp](/okf/project/components/webapp.md) |
+| `webapp/` | the Flask app — see [webapp](/okf/project/components/webapp.md); `webapp/api.py` is the production API, see [prod-api](/okf/project/components/prod-api.md) |
 | `agent-workspace/field_pipeline/` | fills the workbook — see [field_pipeline](/okf/project/components/field-pipeline.md), [stages](/okf/project/stages/index.md) |
-| `agent-workspace/prod/` | production database layer and admin keys — see [prod-db](/okf/project/components/prod-db.md) |
+| `agent-workspace/prod/` | production database, importer, exporter and admin client — see [prod-db](/okf/project/components/prod-db.md), [prod-client](/okf/project/components/prod-client.md) |
 | `agent-workspace/knowledge_base/` | report + OKF export — see [knowledge_base](/okf/project/components/knowledge-base.md) |
 | `agent-workspace/agent_helpers.py`, `domain-skills/` | generic browser-harness agent workspace (unused by this tool so far) |
 | `src/browser_harness/` | the vendored harness core — see [browser-harness-core](/okf/project/components/browser-harness-core.md) (one table there, not per-module concepts) |
