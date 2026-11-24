@@ -1,0 +1,40 @@
+# systemd unit for the hosted site. Replace every @PLACEHOLDER@, copy to /etc/systemd/system/, see deploy/README.md.
+#   @USER@        account that owns the checkout and the database
+#   @REPO@        absolute path of the checkout (not under /home: ProtectHome hides it)
+#   @ENV_FILE@    the env file (PROD_DB, PROD_BACKUP_DIR, ...)
+#   @DB_DIR@      the folder holding PROD_DB (SQLite writes its -wal and -shm files next to it)
+#   @BACKUP_DIR@  PROD_BACKUP_DIR
+#   @VENV@        the venv from deploy/README.md step 3, owned by the deploy user (read-only to the service)
+[Unit]
+Description=Purdue competitive analysis site (waitress, one process)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+EnvironmentFile=@ENV_FILE@
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=@VENV@/bin/python @REPO@/deploy/serve.py
+Restart=on-failure
+RestartSec=5
+
+UMask=0027
+ReadWritePaths=@DB_DIR@ @BACKUP_DIR@ @REPO@/docs/okf/knowledge
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

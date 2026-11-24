@@ -1,0 +1,53 @@
+# nginx: HTTPS in front of deploy/serve.py on 127.0.0.1:8000. Replace @SERVER_NAME@ and the certificate paths.
+# The app trusts X-Forwarded-For only with PROD_TRUSTED_PROXIES=1 in its env file; set it.
+# Only the public paths are forwarded: /api/, /request, /knowledge and /static/. Everything else is 404.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name @SERVER_NAME@;
+    return 301 https://@SERVER_NAME@$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name @SERVER_NAME@;
+
+    ssl_certificate     /etc/ssl/certs/@SERVER_NAME@.pem;
+    ssl_certificate_key /etc/ssl/private/@SERVER_NAME@.key;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    client_max_body_size 64k;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;  # replace, not append: the client is the only address
+    proxy_set_header X-Forwarded-Proto https;
+
+    location / {
+        return 404;
+    }
+    location = / {
+        return 302 /knowledge;
+    }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+    }
+    # An admin publish carries the whole diff, then backs up the database and rebuilds the knowledge pages.
+    location = /api/publish {
+        client_max_body_size 32m;
+        proxy_read_timeout 300s;
+        proxy_pass http://127.0.0.1:8000;
+    }
+    location = /request {
+        proxy_pass http://127.0.0.1:8000;
+    }
+    location = /knowledge {
+        proxy_pass http://127.0.0.1:8000;
+    }
+    location /knowledge/ {
+        proxy_pass http://127.0.0.1:8000;
+    }
+    location /static/ {
+        proxy_pass http://127.0.0.1:8000;
+    }
+}
