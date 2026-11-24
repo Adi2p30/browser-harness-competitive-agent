@@ -67,6 +67,31 @@ stops the browser at the end (also on errors and Ctrl-C), because cloud browsers
 
 Expect about 5 minutes per school with the cloud browser.
 
+## Schools that aren't in the workbook (maintainers)
+
+Adding a competitor is a maintainer task, done from the command line rather than the web app. Run it from
+`agent-workspace/`:
+
+```bash
+uv run --with openpyxl python -m field_pipeline.schools "../EDIT Competitive Analysis Research 2026-2027.xlsx" \
+  add --sheet "MS HRM - Residential" --university "Michigan State University" \
+  --school "Eli Broad College of Business" --program "Master of Human Resources and Labor Relations"
+```
+
+The other subcommands are `list` and `remove <id>`. A school is saved to
+`EDIT Competitive Analysis Research 2026-2027.added_schools.csv` next to the workbook, never into the workbook
+itself. Commit that file so the team gets the school.
+
+`read_rows` merges each added school into its sheet as a row numbered from 10001, far past any real row and never
+renumbered, so runs, reviews, the knowledge base and the health check treat it like a workbook row. All of its
+fields are blank, so a run researches all of them. With no `--link`, the pipeline searches for the program page.
+When a run writes its output copy of the workbook, an added school it filled becomes a real row under the
+program's last school, ready to copy into the master workbook.
+
+`add` prints the command that researches just the new row: `--row "<sheet>:<row>"` (repeatable). Removing a
+school hides it everywhere, but keeps its row number reserved and its results in the run folders. The same school
+and program can't be added twice, or added when the workbook already has it.
+
 ## Output
 
 Every run writes a new version folder; nothing from an earlier run is overwritten, and the input workbook is

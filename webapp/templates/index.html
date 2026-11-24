@@ -4,7 +4,8 @@
 <h1>Competitive Analysis Harness</h1>
 
 {% if form_error %}
-<p class="warn"><strong>{{ form_error }}</strong> Pick a program that school is on, or remove the school filter.</p>
+<p class="warn"><strong>{{ form_error }}</strong> Pick a program that school is on, or remove the school filter.
+  A competitor that isn't in the workbook yet has to be added by a maintainer first.</p>
 {% endif %}
 
 {% if rcac_warning %}
@@ -33,12 +34,12 @@
   <fieldset class="picker" data-name="only">
     <legend>School filter <span class="hint">(none added = every school)</span></legend>
     <select class="picker-select">
-      <option value="">+ Add a school…</option>
+      <option value="">+ Pick a school…</option>
       {% for u in universities %}<option value="{{ u }}">{{ u }}</option>{% endfor %}
     </select>
     <div class="freewrite-row">
-      <input type="text" class="picker-freewrite" placeholder="or type a school name not listed, then Add">
-      <button type="button" class="picker-add">Add</button>
+      <input type="text" class="picker-freewrite" placeholder="or type part of a school's name, e.g. carnegie">
+      <button type="button" class="picker-add">Use</button>
     </div>
     <div class="chips"></div>
   </fieldset>

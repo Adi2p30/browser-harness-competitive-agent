@@ -26,7 +26,7 @@ from field_pipeline.health import quote_key
 from field_pipeline.review import load_reviews
 from field_pipeline.store import DEFAULT_DB, Store
 from field_pipeline.validate import NUMERIC, to_number
-from field_pipeline.workbook import headers, read_rows, read_values
+from field_pipeline.workbook import headers, id_values, load_added, read_rows, read_values
 
 from openpyxl import load_workbook
 
@@ -53,8 +53,10 @@ def text(v) -> str:
 
 
 def current_values(path: str) -> dict[tuple[str, int], dict]:
-    """{(sheet, row): {column: value}} for values already typed into this year's workbook."""
+    """{(sheet, row): {column: value}} for values already typed into this year's workbook, plus the identifying
+    columns of schools a maintainer added (field_pipeline.workbook.add_school)."""
     wb = load_workbook(path, read_only=True)
+    added = load_added(path)
     out = {}
     for ws in wb.worksheets:
         head = headers(ws)
@@ -62,6 +64,8 @@ def current_values(path: str) -> dict[tuple[str, int], dict]:
             continue
         for r, values in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             out[(ws.title, r)] = {h: v for h, v in zip(head, values) if h and v not in (None, "")}
+        for e in (e for e in added if e["sheet"] == ws.title):
+            out[(ws.title, e["row"])] = id_values(head, e)
     wb.close()
     return out
 

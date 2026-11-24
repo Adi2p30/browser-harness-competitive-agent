@@ -35,6 +35,12 @@ Writes `<workbook>_kb/competitive_analysis.html` (open in any browser) and
 See [`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md) for
 every flag; the web app's run form covers the common ones.
 
+## Adding a school (maintainers)
+
+A competitor that isn't in the workbook is added from the command line with `python -m field_pipeline.schools`,
+not from the web app. It's saved beside the workbook in `*.added_schools.csv`, not in the workbook itself; see
+[`agent-workspace/field_pipeline/README.md`](agent-workspace/field_pipeline/README.md#schools-that-arent-in-the-workbook-maintainers).
+
 ## Review queue
 
 Cells the pipeline couldn't fill go to a review queue, grouped by what a person needs to do (check a rejected

@@ -167,6 +167,8 @@ def main() -> None:
     ap.add_argument("xlsx")
     ap.add_argument("--sheet", action="append", help="sheet to fill (repeatable); default: every program sheet")
     ap.add_argument("--only", action="append", help="only rows whose university contains this text (repeatable)")
+    ap.add_argument("--row", action="append", metavar="SHEET:ROW",
+                    help="only this row (repeatable), e.g. 'MS HRM - Residential:10001' for a school added with field_pipeline.schools")
     ap.add_argument("--limit", type=int, help="stop after this many rows")
     ap.add_argument("--browser", choices=("local", "cloud", "auto", "none"), default="local",
                     help="local = your Chrome (default, free), cloud = Browser Use Cloud (needs BROWSER_USE_API_KEY, "
@@ -285,6 +287,10 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
             raise NothingToDo("no row matches the --sheet / --only filters: " + "; ".join(notes))
     if args.only:
         rows = [r for r in rows if any(o.casefold() in r.university.casefold() for o in args.only)]
+    if args.row:
+        rows = [r for r in rows if f"{r.sheet}:{r.row}" in set(args.row)]
+        if not rows:
+            raise NothingToDo(f"no row {' or '.join(args.row)} (sheet name and row number, e.g. 'MS HRM - Residential:5')")
     recheck = read_recheck(args.recheck) if args.recheck else None
     if recheck is not None:
         rows = [r for r in rows if (r.sheet, r.row) in recheck]

@@ -2,6 +2,16 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-24: Maintainers can add schools that aren't in the workbook
+
+A competitor missing from the workbook could not be researched at all, and typing its name into the web app's school
+filter only matched existing rows. Maintainers now add one from the command line with `python -m field_pipeline.schools`
+(`add`, `list`, `remove`). Added schools are kept in `<workbook>.added_schools.csv` beside the workbook, never in the
+workbook itself, and every run, review and knowledge-base build reads them as rows numbered from 10001; output copies
+place them under the sheet's last school. A new `--row SHEET:ROW` flag researches just one row, which `add` prints for
+the new school. The web app's school filter now says that it only matches the workbook and that new schools are added
+by a maintainer. This is a stopgap until the production database gives every program a permanent id.
+
 ## 2026-11-19: Review queue by run
 
 The review queue used to merge every run, taking the newest result for each cell, so a reviewer couldn't work

@@ -12,7 +12,8 @@ status: stable
 `uv run --with flask --with openpyxl --with beautifulsoup4 --with requests --with pypdf --with pyyaml python webapp/app.py`
 
 - `/` — pick sheet(s) and school(s) from dropdowns populated from the workbook (each adds a
-  removable chip; schools also take free-written names not in the workbook), row limit,
+  removable chip; a typed school name only matches the workbook's university names, e.g.
+  "carnegie" — new schools are added by maintainers, not here), row limit,
   overwrite/fresh, browser mode; starts a run. Warns, without starting a run, if
   `RCAC_API_KEY` isn't set (`field_pipeline.llm.api_key`, checked before launching).
 - `/run/<id>` — the live step view: one card per row (`field_pipeline`'s own

@@ -16,6 +16,6 @@ in one table) and [`stages/`](/okf/project/stages/index.md) for how one row is f
 ./run-webapp.sh
 ```
 
-Open the printed `http://127.0.0.1:5000`, add a program and/or school (dropdowns, plus
-free-write for a school not in the workbook), and start a run — more than one can run at once.
+Open the printed `http://127.0.0.1:5000`, pick programs and/or schools from the workbook
+(new schools are added by a maintainer, not here), and start a run — more than one can run at once.
 Every step streams to the page live. See [`components/webapp.md`](/okf/project/components/webapp.md).
