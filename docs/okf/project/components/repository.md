@@ -14,7 +14,7 @@ status: stable
 | `README.md` | entry point: what this tool does, how to run it |
 | `run-webapp.sh` | launches [webapp](/okf/project/components/webapp.md) via `uv` |
 | `deploy/` | hosting kit for the public site — see [deploy](/okf/project/components/deploy.md) |
-| `webapp/` | the Flask app — see [webapp](/okf/project/components/webapp.md); `webapp/api.py` is the production API, see [prod-api](/okf/project/components/prod-api.md) |
+| `webapp/` | the Flask app — see [webapp](/okf/project/components/webapp.md); `webapp/api.py` is the production API ([prod-api](/okf/project/components/prod-api.md)), `webapp/prod_pages.py` and `templates/admin/` the admin app's requests and publish pages |
 | `agent-workspace/field_pipeline/` | fills the workbook — see [field_pipeline](/okf/project/components/field-pipeline.md), [stages](/okf/project/stages/index.md) |
 | `agent-workspace/prod/` | production database, importer, exporter and admin client — see [prod-db](/okf/project/components/prod-db.md), [prod-client](/okf/project/components/prod-client.md) |
 | `agent-workspace/knowledge_base/` | report + OKF export — see [knowledge_base](/okf/project/components/knowledge-base.md) |

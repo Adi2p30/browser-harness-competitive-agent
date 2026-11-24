@@ -2,6 +2,18 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-24: A public site and a local admin app
+
+The web app now runs in one of two modes. The hosted site (`APP_MODE=public`, set by `deploy/serve.py`) serves only
+the knowledge pages, the school-request form, the admin-key API and `/download.xlsx`; the pages that start research
+runs or change reviews don't exist there, so the hosting kit's start-up check now passes. The download is rebuilt
+from the database alone, taking only the workbook's column headers: no hidden sheets, staff comments, blanked
+values or inactive schools from the template reach it, and on the real data all 2,178 published values are in it.
+The admin app (`./run-webapp.sh`, localhost only, no debug) keeps Run, Review and Health and adds a Requests inbox
+(claim, add as program, reject), a Publish page that shows the diff and re-checks it before posting, Add program and
+Pull. Every admin form needs a CSRF token, requests from other host names are refused, and a school request that is
+already done or rejected can't become a second program. Reverse-proxy configs must allow `/download.xlsx`.
+
 ## 2026-11-24: Programs identified by production id, and a hosting kit
 
 Once an admin has pulled the production snapshot, the pipeline works on production programs by their permanent id

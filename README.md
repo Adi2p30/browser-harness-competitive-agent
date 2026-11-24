@@ -14,9 +14,12 @@ See [`docs/okf/project/index.md`](docs/okf/project/index.md) for how the pieces 
 ./run-webapp.sh
 ```
 
-Open the printed `http://127.0.0.1:5000`. Pick a sheet (and optionally a school filter, row
-limit, or browser mode), start a run, and watch it discover, fetch, extract, and validate each
-field live. **A local-mode run drives your real Chrome** (`--browser local`, the default) —
+This starts the **admin app** on your own machine only (`http://127.0.0.1:5000`). Pick a sheet
+(and optionally a school filter, row limit, or browser mode), start a run, and watch it discover,
+fetch, extract, and validate each field live. Its **Requests** and **Publish** pages work through
+school requests and publish to the hosted site (they need `PROD_URL` and `PROD_ADMIN_KEY`). The
+hosted site runs the same app with `APP_MODE=public`: knowledge pages, the school-request form,
+the API and a workbook download, and nothing else; see [`deploy/README.md`](deploy/README.md). **A local-mode run drives your real Chrome** (`--browser local`, the default) —
 `./browser-harness --doctor` first if it can't attach.
 
 ## Build the knowledge base (report + OKF bundle)

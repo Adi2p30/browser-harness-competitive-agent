@@ -4,7 +4,7 @@ title: Components
 
 # Components
 
-- [webapp](/okf/project/components/webapp.md) — Flask app; starts a run, streams its steps, browses the knowledge bundle
+- [webapp](/okf/project/components/webapp.md) — Flask app in two modes: the local admin app (runs, review, health, requests, publish) and the hosted public site (knowledge, school requests, API, workbook download)
 - [field_pipeline](/okf/project/components/field-pipeline.md) — fills the workbook; see [stages](/okf/project/stages/index.md)
 - [prod-db](/okf/project/components/prod-db.md) — the production database: programs with permanent ids, sourced facts, history, publishes, requests, admin keys
   - [prod-importer](/okf/project/components/prod-importer.md) — one-time load of the workbook, runs, reviews and last year into the database
