@@ -221,6 +221,32 @@ def test_admin_rotate(conn):
     assert rotated != key and db.check_key(conn, rotated) == "ana" and db.check_key(conn, key) is None
     with pytest.raises(ValueError):
         db.rotate_admin(conn, "ben")
+    db.revoke_admin(conn, "ana")
+    with pytest.raises(ValueError, match="revoked"):
+        db.rotate_admin(conn, "ana")
+    assert db.check_key(conn, rotated) is None
+
+
+def test_concurrent_backups_never_fail(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "BACKUPS_KEPT", 2)
+    path, errors, made = conn.execute("PRAGMA database_list").fetchone()["file"], [], []
+
+    def publish():
+        try:
+            c = db.connect(Path(path))
+            for _ in range(5):
+                made.append(db.backup(c, tmp_path / "backups"))
+        except Exception as e:  # noqa: BLE001 - any failure fails the test
+            errors.append(e)
+
+    threads = [threading.Thread(target=publish) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert not errors and len(made) == 30  # (a name freed by pruning may be claimed again)
+    assert len(list((tmp_path / "backups").glob("prod-v*.sqlite"))) == 2
+    assert not list((tmp_path / "backups").glob(".prod-backup-*"))
 
 
 def test_request_claims(conn):

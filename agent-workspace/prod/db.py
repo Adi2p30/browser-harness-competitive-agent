@@ -6,6 +6,7 @@ and its writes are atomic against other processes. The current version is the ne
 """
 import hashlib
 import hmac
+import os
 import secrets
 import sqlite3
 from contextlib import contextmanager
@@ -169,16 +170,32 @@ def backup(conn: sqlite3.Connection, backup_dir: Path) -> Path:
             dest.close()
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path, n = backup_dir / f"prod-v{v}-{stamp}.sqlite", 1
-        while path.exists():
-            n += 1
-            path = backup_dir / f"prod-v{v}-{stamp}-{n}.sqlite"
-        tmp.rename(path)
+        while True:
+            try:
+                os.link(tmp, path)  # claims the name atomically: fails rather than replacing a file
+                break
+            except FileExistsError:
+                n += 1
+                path = backup_dir / f"prod-v{v}-{stamp}-{n}.sqlite"
     finally:
         tmp.unlink(missing_ok=True)
-    old = sorted(backup_dir.glob("prod-v*.sqlite"), key=lambda p: (p.stat().st_mtime_ns, p.name))
-    for p in old[:-BACKUPS_KEPT]:
-        p.unlink()
+    _prune(backup_dir)
     return path
+
+
+def _prune(backup_dir: Path) -> None:
+    """Delete all but the newest BACKUPS_KEPT backups. Never fails: a concurrent publish may prune the same files."""
+    try:
+        kept = []
+        for p in backup_dir.glob("prod-v*.sqlite"):
+            try:
+                kept.append((p.stat().st_mtime_ns, p.name, p))
+            except FileNotFoundError:
+                pass
+        for *_, p in sorted(kept)[:-BACKUPS_KEPT]:
+            p.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def apply_changes(conn: sqlite3.Connection, changes: list[dict], by: str, note: str = "",
@@ -256,14 +273,17 @@ def _hash(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-def _issue(conn: sqlite3.Connection, name: str, allow_active: bool) -> str:
+def _issue(conn: sqlite3.Connection, name: str, rotate: bool) -> str:
     key = secrets.token_urlsafe(32)
     with _tx(conn):
         row = conn.execute("SELECT revoked_at FROM admins WHERE name=?", (name,)).fetchone()
-        if row and row["revoked_at"] is None and not allow_active:
+        active = row is not None and row["revoked_at"] is None
+        if active and not rotate:
             raise ValueError(f"admin {name!r} already exists")
-        if row is None and allow_active:
+        if rotate and row is None:
             raise ValueError(f"no admin named {name!r}")
+        if rotate and not active:
+            raise ValueError(f"admin {name!r} is revoked; use add to reissue")
         conn.execute("INSERT INTO admins(name, key_hash, created_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE"
                      " SET key_hash=excluded.key_hash, created_at=excluded.created_at, revoked_at=NULL",
                      (name, _hash(key), now()))
@@ -273,12 +293,13 @@ def _issue(conn: sqlite3.Connection, name: str, allow_active: bool) -> str:
 def add_admin(conn: sqlite3.Connection, name: str) -> str:
     """Create an admin, or reissue a revoked one, and return their key. Only its hash is stored, so this is the one
     time it is shown. An active admin raises ValueError."""
-    return _issue(conn, name, allow_active=False)
+    return _issue(conn, name, rotate=False)
 
 
 def rotate_admin(conn: sqlite3.Connection, name: str) -> str:
-    """Replace an existing admin's key (revoking the old one) and return the new key."""
-    return _issue(conn, name, allow_active=True)
+    """Replace an active admin's key (revoking the old one) and return the new key. A revoked or unknown admin
+    raises ValueError; add_admin reissues a revoked one."""
+    return _issue(conn, name, rotate=True)
 
 
 def revoke_admin(conn: sqlite3.Connection, name: str) -> bool:
