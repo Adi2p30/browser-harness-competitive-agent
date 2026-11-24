@@ -144,8 +144,9 @@ def test_values_normalised():
 
 def test_fresh_import_has_nothing_to_publish(wb):
     """Import, export, diff: no phantom changes (not-published reviews included) and every program mapped."""
-    from field_pipeline.workbook import add_school
-    add_school(wb, "MS HRM", "Boston College", program="MS HRM", website_link="https://bc.edu/hrm")
+    from field_pipeline.workbook import added_path
+    added_path(wb).write_text("id,sheet,university,school,program,website_link,added_by,added_at,removed_at\n"
+                              "1,MS HRM,BOSTON COLLEGE,,MS HRM,https://bc.edu/hrm,,,\n")
     decisions(wb.parent / f"{wb.stem}_field_pipeline" / "runs" / "2026-11-10_000000" / "decisions.csv",
               [(10001, "Credit Hours", "found", "32"), (2, "Average GMAT", "found", "660")])
     importer.import_workbook(wb, wb.parent / "prod.sqlite")

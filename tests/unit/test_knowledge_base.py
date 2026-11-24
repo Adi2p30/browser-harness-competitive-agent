@@ -46,4 +46,4 @@ def test_decisions_newest_version_wins(tmp_path):
     (base / "runs/2026-10-02_100000/decisions.csv").write_text(head + "S,2,U,P,Average GMAT,not-found,,,,,\n")
     files = versions(tmp_path / "Book.xlsx")
     assert [f.parent.name for f in files] == ["Book_field_pipeline", "2026-10-01_100000", "2026-10-02_100000"]
-    assert decisions(files)[("S", 2, "Average GMAT")]["value"] == "610"  # a later blank does not erase it
+    assert decisions(files)[("S:2", "Average GMAT")]["value"] == "610"  # a later blank does not erase it

@@ -22,6 +22,8 @@ from urllib.parse import urlsplit
 
 import requests
 
+from field_pipeline.workbook import snapshot_path
+
 TIMEOUT = 60
 PUBLISH_TIMEOUT = 300  # a publish backs up the database and rebuilds the knowledge bundle
 CONFLICTS = 3
@@ -95,10 +97,6 @@ def setting(name: str) -> str:
     if not (value := os.environ.get(name, "").strip()):
         raise ClientError(f"{name} missing: set it or add it to .env in the repo root")
     return value
-
-
-def snapshot_path(workbook: Path) -> Path:
-    return workbook.with_name(f"{workbook.stem}_field_pipeline") / "prod-snapshot.json"
 
 
 def save_snapshot(workbook: Path, snap: dict) -> Path:
@@ -213,8 +211,8 @@ def main(argv: list[str] | None = None, session=None) -> int:
         elif args.cmd == "add-program":
             pid = client.add_program(sheet=args.sheet, university=args.university, school=args.school,
                                      program=args.program, link=args.link, request_id=args.request)
-            print(f"added program {pid}. Add the school to your workbook with the same sheet, university and program"
-                  " name so the diff can match it, then run `python -m prod.client pull <workbook>`.")
+            print(f"added program {pid}. Run `python -m prod.client pull <workbook>`, then research it with"
+                  f" `python -m field_pipeline <workbook> --program {pid}`.")
         else:
             return run(args, client)
     except ClientError as e:

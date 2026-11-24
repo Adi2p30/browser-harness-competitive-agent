@@ -11,9 +11,10 @@ status: stable
 
 `uv run --with flask --with openpyxl --with beautifulsoup4 --with requests --with pypdf --with pyyaml python webapp/app.py`
 
-- `/` — pick sheet(s) and school(s) from dropdowns populated from the workbook (each adds a
-  removable chip; a typed school name only matches the workbook's university names, e.g.
-  "carnegie" — new schools are added by maintainers, not here), row limit,
+- `/` — pick sheet(s) and school(s) from dropdowns populated from the programs a run would
+  research (production's, once a snapshot is pulled, else the workbook's rows; each adds a
+  removable chip; a typed school name only matches those university names, e.g.
+  "carnegie" — new programs are added with `prod.client add-program`, not here), row limit,
   overwrite/fresh, browser mode; starts a run. Warns, without starting a run, if
   `RCAC_API_KEY` isn't set (`field_pipeline.llm.api_key`, checked before launching).
 - `/run/<id>` — the live step view: one card per row (`field_pipeline`'s own
@@ -27,7 +28,8 @@ status: stable
   `all`): every unfilled or stale cell of that run, grouped by what a
   person needs to do, with one-click decisions (accept the rejected candidate, Not ranked, No, leave blank) or
   a typed value and source. Decisions append to `<workbook>_field_pipeline/reviews.csv`; a Reviewed tab undoes
-  them; the queue also round-trips through an Excel export/import. The reviewer's name is a cookie.
+  them; the queue also round-trips through an Excel export/import. A cell's id is `<program id>|<field>`
+  (`<sheet>:<row>|<field>` before a snapshot is pulled). The reviewer's name is a cookie.
 - `/health` — the latest source health check (`field_pipeline.health`): counts per result, a table of
   changed / missing / dead / unreadable values with the stored quote and what the page says now. Buttons
   start a check (blocked while a run is going: both write the page cache) or a `--recheck` pipeline run on

@@ -23,7 +23,9 @@ A cell is in the queue when the pipeline decision for it is not a filled status,
   not-published  class-profile / score / outcome fields the program's pages do not state: confirm
 
 Decisions go to <workbook>_field_pipeline/reviews.csv (append-only; the newest decision per cell wins, `undo`
-returns a cell to the queue). knowledge_base uses reviewed values ahead of every pipeline value.
+returns a cell to the queue). knowledge_base uses reviewed values ahead of every pipeline value. A cell is a
+(program ref, field) pair (field_pipeline.workbook.ref_of); its queue id is "<ref>|<field>", "<program id>|<field>"
+once a production snapshot is pulled.
 """
 import argparse
 import csv
@@ -33,6 +35,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .fields import FILLED, field_for
+from .csvlog import append_csv
+from .workbook import legacy_programs, load_snapshot, ref_of
 
 GROUPS = {
     "candidate": "Rejected value to check",
@@ -72,7 +76,7 @@ WHY = {  # pipeline statuses in plain words
 }
 DECISIONS = ("accept", "value", "keep", "no", "not-ranked", "not-published", "undo")
 REVIEW_COLUMNS = ["sheet", "row", "university", "program", "field", "decision", "value", "source_url", "quote", "note",
-                  "reviewer", "at"]
+                  "reviewer", "at", "program_id"]  # new columns go last (csvlog)
 _lock = threading.Lock()
 
 
@@ -80,15 +84,19 @@ def reviews_path(workbook: Path) -> Path:
     return workbook.with_name(f"{workbook.stem}_field_pipeline") / "reviews.csv"
 
 
-def load_reviews(workbook: Path) -> dict[tuple[str, int, str], dict]:
-    """{(sheet, row, field): newest decision}; cells whose newest decision is `undo` are left out."""
+def load_reviews(workbook: Path, snapshot: dict | None = None) -> dict[tuple[int | str, str], dict]:
+    """{(program ref, field): newest decision}, refs as workbook.ref_of gives them with this snapshot (None: the
+    workbook's rows); cells whose newest decision is `undo`, and decisions on no known program, are left out."""
     path = reviews_path(workbook)
-    out: dict[tuple[str, int, str], dict] = {}
+    out: dict[tuple[int | str, str], dict] = {}
     if not path.exists():
         return out
-    with open(path, newline="", encoding="utf-8") as f:
+    legacy = legacy_programs(snapshot)
+    with open(path, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
-            key = (r["sheet"], int(r["row"]), r["field"])
+            if (ref := ref_of(r, legacy)) is None:
+                continue
+            key = (ref, r["field"])
             if r["decision"] == "undo":
                 out.pop(key, None)
             else:
@@ -97,15 +105,8 @@ def load_reviews(workbook: Path) -> dict[tuple[str, int, str], dict]:
 
 
 def append_reviews(workbook: Path, rows: list[dict]) -> None:
-    path = reviews_path(workbook)
-    path.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        new = not path.exists()
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, REVIEW_COLUMNS, extrasaction="ignore")
-            if new:
-                w.writeheader()
-            w.writerows(rows)
+        append_csv(reviews_path(workbook), REVIEW_COLUMNS, rows)
 
 
 def group_of(field: str, status: str, value: str) -> str:
@@ -128,8 +129,8 @@ def why(status: str, detail: str) -> str:
     return f"{text} ({detail})" if detail else text
 
 
-def item_id(sheet: str, row: int, field: str) -> str:
-    return f"{sheet}|{row}|{field}"
+def item_id(ref: int | str, field: str) -> str:
+    return f"{ref}|{field}"
 
 
 def run_id(path: Path) -> str:
@@ -144,7 +145,7 @@ def list_runs(workbook: Path) -> list[dict]:
     index = workbook.with_name(f"{workbook.stem}_field_pipeline") / "runs.csv"
     info = {}
     if index.exists():
-        with open(index, newline="", encoding="utf-8") as f:
+        with open(index, newline="", encoding="utf-8-sig") as f:
             info = {r["version"]: r for r in csv.DictReader(f)}
     out = []
     for path in reversed(versions(workbook)):
@@ -157,6 +158,8 @@ def list_runs(workbook: Path) -> list[dict]:
             label += f" · {'all programs' if sheets == 'all' else sheets}"
             if r.get("only"):
                 label += f" · {r['only']}"
+            if r.get("programs"):
+                label += f" · program {r['programs']}"
             if r.get("rows"):
                 label += f" · {r['rows']} row{'s' if r['rows'] != '1' else ''}"
         out.append({"id": rid, "label": label})
@@ -169,10 +172,11 @@ def build_queue(workbook: Path, prior: Path | None = None, db: Path | None = Non
 
 
 def queue(workbook: Path, prior: Path | None = None, db: Path | None = None, run: str | None = None) -> dict:
-    """{"items", "run", "filled_elsewhere", "reviewed", "cells"}: the review queue, most useful groups first, then by sheet,
-    school and field. run = a run id (list_runs): only the cells that run left unfilled, and only changed sources
-    whose value came from that run; None = every run, the newest result per cell. Cells already reviewed, or filled
-    since by another run or the workbook, are left out and counted."""
+    """{"items", "run", "filled_elsewhere", "reviewed", "cells", "reviews"}: the review queue, most useful groups first,
+    then by sheet, school and field. run = a run id (list_runs): only the cells that run left unfilled, and only
+    changed sources whose value came from that run; None = every run, the newest result per cell. Cells already
+    reviewed, or filled since by another run or the workbook, are left out and counted. cells and reviews are keyed
+    (program ref, field), as load_reviews keys them, with the workbook's snapshot if it has one."""
     from knowledge_base.__main__ import attach_health, build, versions  # knowledge_base imports field_pipeline
     from .store import DEFAULT_DB
     workbook = Path(workbook)
@@ -183,26 +187,29 @@ def queue(workbook: Path, prior: Path | None = None, db: Path | None = None, run
     scope = [p for p in files if run is None or run_id(p) == run]
     if run is not None and not scope:
         raise ValueError(f"no run '{run}'")
-    kb = build(str(workbook), str(prior) if prior else None, files)
+    snap = load_snapshot(workbook)
+    legacy = legacy_programs(snap)
+    reviewed = load_reviews(workbook, snap)
+    kb = build(str(workbook), str(prior) if prior else None, files, reviewed, snap)
     attach_health(kb, db or DEFAULT_DB)
+    by_ref = {ref_of(p, legacy): p for p in kb["programs"] if not p["lastYearOnly"]}
     programs = {p["id"]: p for p in kb["programs"]}
     facts = {}
     for f in kb["facts"]:
         p = programs[f["p"]]
-        if p.get("row"):
-            facts[(p["sheet"], p["row"], f["f"])] = (f, p)
-    by_row = {(p["sheet"], p["row"]): p for p in kb["programs"] if p.get("row")}
+        if not p["lastYearOnly"]:
+            facts[(ref_of(p, legacy), f["f"])] = (f, p)
 
-    reviewed = load_reviews(workbook)
-    latest: dict[tuple[str, int, str], dict] = {}  # newest pipeline decision per cell, within the scope
+    latest: dict[tuple[int | str, str], dict] = {}  # newest pipeline decision per cell, within the scope
     for path in scope:
         with open(path, newline="", encoding="utf-8") as fh:
             for d in csv.DictReader(fh):
-                latest[(d["sheet"], int(d["row"]), d["field"])] = {**d, "run": run_id(path)}
+                if (ref := ref_of(d, legacy)) is not None:
+                    latest[(ref, d["field"])] = {**d, "run": run_id(path)}
 
     items, elsewhere, done = [], 0, 0
     for key, d in latest.items():
-        fact, p = facts.get(key, (None, by_row.get(key[:2])))
+        fact, p = facts.get(key, (None, by_ref.get(key[0])))
         if d["status"] in FILLED or p is None:
             continue
         if key in reviewed:
@@ -231,14 +238,15 @@ def queue(workbook: Path, prior: Path | None = None, db: Path | None = None, run
                       "snippet": fact.get("hn") or "", "run": run or "", "last_year": "", "last_year_url": ""}
                      | _where(p, key))
     order = list(GROUPS)
-    items.sort(key=lambda i: (order.index(i["group"]), i["sheet"], i["university"], i["row"], i["field"]))
-    return {"items": items, "run": run, "filled_elsewhere": elsewhere, "reviewed": done, "cells": set(latest)}
+    items.sort(key=lambda i: (order.index(i["group"]), i["sheet"], i["university"], i["row"] or 0, i["field"]))
+    return {"items": items, "run": run, "filled_elsewhere": elsewhere, "reviewed": done, "cells": set(latest),
+            "reviews": reviewed}
 
 
 def _where(p: dict, key: tuple) -> dict:
-    f = field_for(key[2])
-    return {"id": item_id(*key), "sheet": key[0], "row": key[1], "field": key[2], "university": p["university"],
-            "yesno": bool((f and f.kind == "yesno") or YESNO_QUESTION.search(key[2])),
+    f = field_for(key[1])
+    return {"id": item_id(*key), "program_id": p["program_id"], "sheet": p["sheet"], "row": p["row"], "field": key[1],
+            "university": p["university"], "yesno": bool((f and f.kind == "yesno") or YESNO_QUESTION.search(key[1])),
             "program": p["program"], "program_url": p.get("url") or ""}
 
 
@@ -265,19 +273,20 @@ def make_review(item: dict, decision: str, value: str = "", source_url: str = ""
         value = ""
     elif not value:
         raise ValueError("type the value first")
-    return {"sheet": item["sheet"], "row": item["row"], "university": item["university"], "program": item["program"],
-            "field": item["field"], "decision": decision, "value": value, "source_url": source_url, "quote": quote,
+    return {"program_id": item.get("program_id"), "sheet": item["sheet"], "row": item["row"],
+            "university": item["university"], "program": item["program"], "field": item["field"], "decision": decision, "value": value, "source_url": source_url, "quote": quote,
             "note": note, "reviewer": (reviewer or "").strip(), "at": datetime.now().isoformat(timespec="seconds")}
 
 
 def undo_review(review: dict, reviewer: str = "") -> dict:
-    return {**{k: review[k] for k in ("sheet", "row", "university", "program", "field")}, "decision": "undo",
+    return {**{k: review.get(k) for k in ("program_id", "sheet", "row", "university", "program", "field")},
+            "decision": "undo",
             "value": "", "source_url": "", "quote": "", "note": "", "reviewer": reviewer,
             "at": datetime.now().isoformat(timespec="seconds")}
 
 
 # Excel round trip ---------------------------------------------------------------------------------------------------
-EXPORT_COLUMNS = [("Group", 22), ("Sheet", 18), ("Row", 6), ("University", 26), ("Program", 22), ("Field", 26),
+EXPORT_COLUMNS = [("Group", 22), ("Sheet", 18), ("Row", 6), ("Program ID", 10), ("University", 26), ("Program", 22), ("Field", 26),
                   ("Pipeline status", 14), ("Candidate value", 22), ("Candidate quote", 40), ("Candidate source", 30),
                   ("Why", 30), ("Page now says", 30), ("Last year's value", 16), ("Program page", 30),
                   ("Decision", 14), ("Value", 18), ("Source URL", 30), ("Note", 24)]
@@ -294,7 +303,7 @@ def export_xlsx(items: list[dict], path: Path) -> Path:
     ws.title = "Review queue"
     ws.append([c for c, _ in EXPORT_COLUMNS])
     for i in items:
-        ws.append([GROUPS[i["group"]], i["sheet"], i["row"], i["university"], i["program"], i["field"], i["status"],
+        ws.append([GROUPS[i["group"]], i["sheet"], i["row"], i["program_id"], i["university"], i["program"], i["field"], i["status"],
                    i["value"], i["quote"], i["url"], i["why"], i["snippet"], i["last_year"], i["program_url"],
                    None, None, None, None])
     first_input = [c for c, _ in EXPORT_COLUMNS].index(INPUT_FROM) + 1
@@ -336,20 +345,29 @@ def export_xlsx(items: list[dict], path: Path) -> Path:
 
 
 def import_xlsx(path: Path, items: list[dict], reviewer: str) -> tuple[list[dict], list[str]]:
-    """(reviews to append, problems) from a filled-in export. Rows match queue items by sheet, row and field."""
+    """(reviews to append, problems) from a filled-in export. Rows match queue items by program id and field, or
+    (exports without program ids) by sheet, row and field."""
     from openpyxl import load_workbook
     by_id = {i["id"]: i for i in items}
+    by_cell = {(i["sheet"], i["row"], i["field"]): i for i in items if i["row"] is not None}
     ws = load_workbook(path, read_only=True)["Review queue"]
     rows = ws.iter_rows(values_only=True)
     head = [str(h or "") for h in next(rows)]
     col = {h: k for k, h in enumerate(head)}
     reviews, problems = [], []
     for n, r in enumerate(rows, 2):
-        get = lambda name: "" if r[col[name]] is None else str(r[col[name]]).strip()
+        get = lambda name: "" if col.get(name) is None or r[col[name]] is None else str(r[col[name]]).strip()
         decision = get("Decision").casefold()
         if not decision:
             continue
-        item = by_id.get(item_id(get("Sheet"), int(float(get("Row") or 0)), get("Field")))
+        pid, row = get("Program ID"), get("Row")
+        try:
+            item = (by_id.get(item_id(int(float(pid)), get("Field"))) if pid
+                    else by_cell.get((get("Sheet"), int(float(row)), get("Field"))) if row else None)
+        except ValueError:
+            problems.append(f"row {n}: {get('University')} / {get('Field')}: program id {pid!r} or row {row!r} is not a"
+                            " number")
+            continue
         if item is None:
             problems.append(f"row {n}: {get('University')} / {get('Field')} is no longer in the queue")
             continue

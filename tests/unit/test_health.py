@@ -158,7 +158,7 @@ def test_recheck_csv_round_trip(tmp_path):
             {**base, "sheet": "MS HRM", "row": 5, "field": "Credits", "status": "entered", "result": "missing"}]
     recheck = write_outputs(tmp_path, rows)
     assert [(r["row"], r["field"]) for r in recheck] == [(3, "Tuition"), (5, "Credits")]
-    assert read_recheck(tmp_path / "recheck.csv") == {("MS HRM", 3): {"Tuition"}, ("MS HRM", 5): {"Credits"}}
+    assert read_recheck(tmp_path / "recheck.csv") == {"MS HRM:3": {"Tuition"}, "MS HRM:5": {"Credits"}}
     assert (tmp_path / "health.csv").read_text().count("\n") == 6
 
 

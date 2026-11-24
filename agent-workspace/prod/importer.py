@@ -4,8 +4,9 @@
 
 The knowledge base is built exactly as `python -m knowledge_base` builds it (every pipeline version, reviews.csv,
 the one OLD *.xlsx next to the workbook), so each (program, field) keeps the value that wins there. Programs get
-`legacy_key` "sheet:row"; schools only in last year's workbook are kept inactive with no key. A review decision
-"not-published" becomes a fact with that status and no value, as prod.diff publishes it. The import writes no
+`legacy_key` "sheet:row"; schools only in last year's workbook are kept inactive with no key. The knowledge base is
+built from the workbook's rows even when a production snapshot sits next to it: the import is what makes the ids.
+A review decision "not-published" becomes a fact with that status and no value, as prod.diff publishes it. The import writes no
 fact_history rows: its publishes row is the record, and history starts with the first publish. A database that
 already has programs or publishes is refused.
 """
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from field_pipeline.fields import FILLED
 from field_pipeline.review import load_reviews
+from field_pipeline.workbook import ref_of
 from knowledge_base.__main__ import build, versions
 
 from . import db
@@ -40,15 +42,15 @@ def origin(status: str) -> str:
     raise ValueError(f"unknown knowledge-base status {status!r}")
 
 
-def runs(files: list[Path]) -> dict[tuple[str, int, str], str | None]:
-    """{(sheet, row, field): version folder of the run whose value won}, by knowledge_base.decisions' rule; None for
-    the decisions.csv written before versioning."""
+def runs(files: list[Path], legacy: dict[str, dict] | None = None) -> dict[tuple[int | str, str], str | None]:
+    """{(program ref, field): version folder of the run whose value won}, by knowledge_base.decisions' rule (refs as
+    field_pipeline.workbook.ref_of gives them); None for the decisions.csv written before versioning."""
     out = {}
     for path in files:
         run = path.parent.name if path.parent.parent.name == "runs" else None
         with open(path, newline="", encoding="utf-8") as f:
-            out.update({(d["sheet"], int(d["row"]), d["field"]): run for d in csv.DictReader(f)
-                        if d["status"] in FILLED})
+            out.update({(ref, d["field"]): run for d in csv.DictReader(f)
+                        if d["status"] in FILLED and (ref := ref_of(d, legacy)) is not None})
     return out
 
 
@@ -104,9 +106,9 @@ def import_workbook(workbook: Path, db_path: Path, prior: Path | None = None, by
                     conn.execute("UPDATE programs SET active=0 WHERE id=?", (pid,))
                 ids[p["id"]] = pid
             hidden = {k: rv for k, rv in reviews.items() if rv["decision"] == "not-published"}
+            programs = {p["id"]: p for p in kb["programs"]}
             for f in kb["facts"]:
-                p = kb["programs"][f["p"]]
-                key = (p["sheet"], p["row"], f["f"])
+                key = (ref_of(programs[f["p"]], None), f["f"])
                 if (value := to_text(f["v"])) is None or key in hidden:
                     continue
                 o = origin(f["s"])
@@ -115,10 +117,10 @@ def import_workbook(workbook: Path, db_path: Path, prior: Path | None = None, by
                     run_of.get(key) if o == "pipeline" else None,
                     (reviews[key]["reviewer"] or None) if o == "review" else None, 1))
                 origins[o] += 1
-            rows = {(p["sheet"], p["row"]): ids[p["id"]] for p in kb["programs"] if not p["lastYearOnly"]}
-            for (sheet, row, field), rv in sorted(hidden.items()):
-                if (sheet, row) in rows:
-                    conn.execute(FACT, (rows[(sheet, row)], field,
+            rows = {ref_of(p, None): ids[p["id"]] for p in kb["programs"] if not p["lastYearOnly"]}
+            for (ref, field), rv in sorted(hidden.items()):
+                if ref in rows:
+                    conn.execute(FACT, (rows[ref], field,
                                         *(not_published(rv)[k] for k in db.NEW_FIELDS), 1))
                     origins["review"] += 1
             conn.execute("INSERT INTO publishes(version, at, by, n_applied, n_conflicts, note) VALUES(1,?,?,?,0,?)",

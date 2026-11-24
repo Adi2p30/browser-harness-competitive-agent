@@ -11,7 +11,10 @@ status: stable
 
 `python -m knowledge_base <workbook.xlsx>`, run from `agent-workspace/`. Reads every
 `field_pipeline` run's `decisions.csv`, the workbook's own typed cells, and last year's
-workbook, in that priority order, into one fact per (program, field). Writes:
+workbook, in that priority order, into one fact per (program, field). Once an admin has pulled
+production's snapshot, the programs are production's active ones and a program's id is its
+production id (programs added through the API included); otherwise they are the workbook's
+rows. Writes:
 
 - `<workbook>_kb/kb.sqlite` and `competitive_analysis.html` (unchanged, pre-existing)
 - `docs/okf/knowledge/` — the same facts as an [OKF](/okf/index.md) concept bundle

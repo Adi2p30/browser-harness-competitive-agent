@@ -119,24 +119,36 @@ class _Path(type(Path())):  # a Path that can carry test notes
     pass
 
 
-def _review_setup(tmp_path, monkeypatch):
+def _review_setup(tmp_path, monkeypatch, snapshot=True):
+    """A queue of two cells of production program 7 (legacy row MS HRM:2), with the admin's snapshot pulled; or,
+    without a snapshot, of workbook row MS HRM:2."""
+    import json
     xlsx = _Path(tmp_path) / "EDIT Competitive Analysis Research 2026-2027.xlsx"
     xlsx.write_bytes(b"")
-    base = {"sheet": "MS HRM", "row": 2, "university": "PURDUE", "program": "HRM", "status": "bad-value",
+    snap = webapp.snapshot_path(xlsx)
+    snap.parent.mkdir()
+    if snapshot:
+        snap.write_text(json.dumps({"version": 1, "facts": [], "programs": [
+            {"id": 7, "sheet": "MS HRM", "university": "PURDUE", "school": "", "program": "HRM", "link": "",
+             "active": 1, "legacy_key": "MS HRM:2"}]}))
+    ref = 7 if snapshot else "MS HRM:2"
+    base = {"program_id": 7 if snapshot else None, "sheet": "MS HRM", "row": 2, "university": "PURDUE",
+            "program": "HRM",
+            "status": "bad-value",
             "quote": "Average GMAT 650", "url": "https://purdue.edu/hrm", "detail": "names 2019-2020", "snippet": "",
             "why": "a value was found but failed a check (names 2019-2020)", "yesno": False,
             "run": "r1", "last_year": "640", "last_year_url": "", "program_url": "https://purdue.edu/hrm"}
-    items = [{**base, "id": "MS HRM|2|Average GMAT", "field": "Average GMAT", "group": "candidate", "value": "650"},
-             {**base, "id": "MS HRM|2|Ranking (QS)", "field": "Ranking (QS)", "group": "ranking", "value": "",
+    items = [{**base, "id": f"{ref}|Average GMAT", "field": "Average GMAT", "group": "candidate", "value": "650"},
+             {**base, "id": f"{ref}|Ranking (QS)", "field": "Ranking (QS)", "group": "ranking", "value": "",
               "status": "not-found", "quote": "", "url": ""}]
     monkeypatch.setattr(webapp, "_xlsx", lambda: xlsx)
     asked = []
 
     def fake_queue(x, run):
         asked.append(run)
-        done = webapp.review.load_reviews(x)
-        return {"items": [i for i in items if (i["sheet"], i["row"], i["field"]) not in done], "run": run,
-                "filled_elsewhere": 2, "reviewed": 0, "cells": {(i["sheet"], i["row"], i["field"]) for i in items}}
+        done = webapp.review.load_reviews(x, webapp.load_snapshot(x))
+        return {"items": [i for i in items if (ref, i["field"]) not in done], "run": run, "filled_elsewhere": 2,
+                "reviewed": 0, "cells": {(ref, i["field"]) for i in items}, "reviews": done}
 
     monkeypatch.setattr(webapp, "_queue", fake_queue)
     monkeypatch.setattr(webapp.review, "list_runs", lambda x: [
@@ -158,18 +170,50 @@ def test_review_decide_and_undo(client, tmp_path, monkeypatch):
     c, _ = client
     xlsx = _review_setup(tmp_path, monkeypatch)
     c.post("/review/name", data={"reviewer": "Ana"})
-    r = c.post("/review/decide", data={"id": "MS HRM|2|Average GMAT", "decision": "accept", "group": "candidate"})
+    r = c.post("/review/decide", data={"id": "7|Average GMAT", "decision": "accept", "group": "candidate"})
     assert r.status_code == 302 and "msg=" in r.headers["Location"]
-    saved = webapp.review.load_reviews(xlsx)[("MS HRM", 2, "Average GMAT")]
-    assert saved["value"] == "650" and saved["reviewer"] == "Ana"
+    saved = reviews(xlsx)[(7, "Average GMAT")]
+    assert (saved["value"], saved["reviewer"], saved["program_id"]) == ("650", "Ana", "7")
     assert "Accept 650" not in c.get("/review?group=candidate").get_data(as_text=True)
+    assert 'name="id" value="7|Average GMAT"' in c.get("/review?group=reviewed").get_data(as_text=True)
 
-    r = c.post("/review/decide", data={"id": "MS HRM|2|Ranking (QS)", "decision": "value", "value": ""})
+    r = c.post("/review/decide", data={"id": "7|Ranking (QS)", "decision": "value", "value": ""})
     assert "error=" in r.headers["Location"]  # no value typed: nothing saved
-    assert ("MS HRM", 2, "Ranking (QS)") not in webapp.review.load_reviews(xlsx)
+    assert (7, "Ranking (QS)") not in reviews(xlsx)
 
-    c.post("/review/undo", data={"id": "MS HRM|2|Average GMAT"})
-    assert webapp.review.load_reviews(xlsx) == {}
+    r = c.post("/review/undo", data={"id": "7|Average GMAT"})
+    assert reviews(xlsx) == {} and "Average+GMAT+for+PURDUE" in r.headers["Location"]
+
+
+def test_review_decide_and_undo_without_a_snapshot(client, tmp_path, monkeypatch):
+    c, _ = client
+    xlsx = _review_setup(tmp_path, monkeypatch, snapshot=False)
+    r = c.post("/review/decide", data={"id": "MS HRM:2|Average GMAT", "decision": "accept", "group": "candidate"})
+    assert r.status_code == 302 and "msg=" in r.headers["Location"]
+    saved = reviews(xlsx)[("MS HRM:2", "Average GMAT")]
+    assert (saved["value"], saved["row"], saved["program_id"]) == ("650", "2", "")
+    assert 'value="MS HRM:2|Average GMAT"' in c.get("/review?group=reviewed").get_data(as_text=True)
+    c.post("/review/undo", data={"id": "MS HRM:2|Average GMAT"})
+    assert reviews(xlsx) == {}
+
+
+def test_review_undo_of_a_decision_from_before_program_ids(client, tmp_path, monkeypatch):
+    """A reviews.csv row without program_id is the program with its legacy key; the log gains the column."""
+    c, _ = client
+    xlsx = _review_setup(tmp_path, monkeypatch)
+    path = webapp.review.reviews_path(xlsx)
+    path.write_text("sheet,row,university,program,field,decision,value,source_url,quote,note,reviewer,at\n"
+                    "MS HRM,2,PURDUE,HRM,Average GMAT,accept,650,,,,Bo,2026-11-01T00:00:00\n")
+    assert reviews(xlsx)[(7, "Average GMAT")]["reviewer"] == "Bo"
+    c.post("/review/undo", data={"id": "7|Average GMAT"})
+    lines = path.read_text().splitlines()
+    assert reviews(xlsx) == {} and lines[0].endswith(",reviewer,at,program_id")
+    assert lines[1].endswith(",Bo,2026-11-01T00:00:00")  # the old row, unchanged
+    assert path.with_name("reviews.csv.pre-program-id").exists()
+
+
+def reviews(xlsx):
+    return webapp.review.load_reviews(xlsx, webapp.load_snapshot(xlsx))
 
 
 def test_review_export_and_import(client, tmp_path, monkeypatch):
@@ -190,7 +234,7 @@ def test_review_export_and_import(client, tmp_path, monkeypatch):
     out.seek(0)
     r = c.post("/review/import", data={"file": (out, "queue.xlsx")}, content_type="multipart/form-data")
     assert "Imported+1" in r.headers["Location"] or "Imported%201" in r.headers["Location"]
-    assert webapp.review.load_reviews(xlsx)[("MS HRM", 2, "Ranking (QS)")]["value"] == "Not ranked"
+    assert head.index("Program ID") >= 0 and reviews(xlsx)[(7, "Ranking (QS)")]["value"] == "Not ranked"
 
 
 def test_mdlite_tables_code_and_title():
@@ -224,7 +268,7 @@ def test_run_refused_when_school_is_not_on_chosen_programs(client, monkeypatch):
     c, calls = client
     rows = [Row("1yr MBA", 2, "EMORY UNIVERSITY", "", "", []),
             Row("MS BAIM - Residential", 7, "CARNEGIE MELLON UNIVERSITY", "", "", [])]
-    monkeypatch.setattr(webapp, "read_rows", lambda path, sheets=None: ({"1yr MBA": [], "MS BAIM - Residential": []},
+    monkeypatch.setattr(webapp, "read_rows", lambda path, sheets=None, snapshot=None: ({"1yr MBA": [], "MS BAIM - Residential": []},
                                                                        rows))
     r = c.post("/run", data={"sheet": ["1yr MBA"], "only": ["CARNEGIE MELLON UNIVERSITY"]})
     assert r.status_code == 400 and not calls
@@ -247,7 +291,7 @@ def test_review_is_by_run(client, tmp_path, monkeypatch):
     assert xlsx.asked[-1] is None
     c.get("/review?run=nope")
     assert xlsx.asked[-1] == "2026-11-06_103455_fresh"  # unknown run: back to the newest
-    r = c.post("/review/decide", data={"id": "MS HRM|2|Average GMAT", "decision": "accept",
+    r = c.post("/review/decide", data={"id": "7|Average GMAT", "decision": "accept",
                                        "run": "2026-10-23_124342_fresh", "group": "candidate"})
     assert "run=2026-10-23_124342_fresh" in r.headers["Location"]  # back to the same run's queue
     r = c.get("/review/export?run=2026-10-23_124342_fresh")

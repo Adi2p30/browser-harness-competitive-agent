@@ -11,7 +11,7 @@ from pathlib import Path
 
 from field_pipeline.fields import SKIP, field_for, link_target
 from field_pipeline.validate import NUMERIC, to_number
-from field_pipeline.workbook import read_rows
+from field_pipeline.workbook import legacy_row, read_rows
 
 from prod import db
 
@@ -35,13 +35,6 @@ def sheet_fields(head: list) -> list[dict]:
     order = list(dict.fromkeys(GROUP_LABELS.values()))
     fields.sort(key=lambda f: order.index(f["group"]))
     return fields
-
-
-def legacy_row(key: str | None) -> int | None:
-    """The workbook row of a legacy_key "sheet:row", else None."""
-    if not key or not (m := re.search(r":(\d+)$", key)):
-        return None
-    return int(m.group(1))
 
 
 def _fact(pid: int, name: str, kind: str, f: dict) -> dict:
@@ -73,7 +66,8 @@ def build_from_snapshot(snap: dict, workbook: Path) -> dict:
         sheets.append({"name": sheet, "fields": fields})
         mine = [(legacy_row(p["legacy_key"]), p) for p in snap["programs"] if p["active"] and p["sheet"] == sheet]
         for row, p in sorted(mine, key=lambda rp: (rp[0] is None, rp[0] or 0, rp[1]["id"])):
-            programs.append({"id": p["id"], "sheet": sheet, "row": row, "university": p["university"],
+            programs.append({"id": p["id"], "program_id": p["id"], "sheet": sheet, "row": row,
+                             "university": p["university"],
                              "program": p["program"] or "", "school": p["school"] or "", "url": p["link"] or "",
                              "purdue": words(p["university"]) in (["purdue", "university"],
                                                                   ["purdue", "university", "west", "lafayette"]),

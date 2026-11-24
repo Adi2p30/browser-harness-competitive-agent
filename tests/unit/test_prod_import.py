@@ -135,8 +135,9 @@ def test_missing_workbook_or_prior_exits_cleanly(wb):
 
 
 def test_added_school_keeps_its_fixed_row(wb):
-    from field_pipeline.workbook import add_school
-    add_school(wb, "MS HRM", "Boston College", program="MS HRM", website_link="https://bc.edu/hrm")
+    from field_pipeline.workbook import added_path
+    added_path(wb).write_text("id,sheet,university,school,program,website_link,added_by,added_at,removed_at\n"
+                              "1,MS HRM,BOSTON COLLEGE,,MS HRM,https://bc.edu/hrm,,,\n")
     _, snap = imported(wb)
     bc = next(p for p in snap["programs"] if p["university"] == "BOSTON COLLEGE")
     assert (bc["legacy_key"], bc["active"], bc["link"]) == ("MS HRM:10001", 1, "https://bc.edu/hrm")
@@ -198,5 +199,5 @@ def test_not_published_review_replaces_the_cell(wb):
     expected = {"value": None, "status": "not-published", "cycle": "2026-2027", "source_url": URL, "quote": None,
                 "origin": "review", "run": None, "reviewed_by": "Bo"}
     assert {k: f[k] for k in db.NEW_FIELDS} == expected
-    assert importer.not_published(review.load_reviews(wb)[("MS HRM", 2, "Credit Hours")]) == expected
+    assert importer.not_published(review.load_reviews(wb)[("MS HRM:2", "Credit Hours")]) == expected
     assert summary["origins"] == {"review": 2, "workbook": 1, "prior-year": 2} and summary["facts"] == 5

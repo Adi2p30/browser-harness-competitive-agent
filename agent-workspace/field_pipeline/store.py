@@ -1,12 +1,17 @@
 """SQLite store shared by every stage. Pages are keyed by URL and reused across rows, sheets and runs.
 With `fresh_since` (a --fresh run) pages and results stored before that time are invisible: pages are fetched
 again and every field is researched again; what this run stores is still shared by later rows and later runs.
-Website Links found by search in earlier runs are inputs, not results, so they are still reused."""
+Website Links found by search in earlier runs are inputs, not results, so they are still reused.
+
+Candidates and results are keyed by workbook.Row.key: "p<program id>" with a production snapshot,
+"sheet::row::university::program" without. migrate_keys moves the second form to the first."""
 import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
+
+from .workbook import legacy_row
 
 DEFAULT_DB = Path(__file__).resolve().parent / "data" / "pipeline.sqlite"
 
@@ -21,7 +26,7 @@ CREATE TABLE IF NOT EXISTS results (
     cycle TEXT, PRIMARY KEY (row_key, field));
 CREATE TABLE IF NOT EXISTS health (
     url TEXT, quote_key TEXT, sheet TEXT, row INTEGER, field TEXT, result TEXT, final_url TEXT, snippet TEXT,
-    score REAL, detail TEXT, checked_at REAL, run TEXT);
+    score REAL, detail TEXT, checked_at REAL, run TEXT, program_id INTEGER);
 CREATE INDEX IF NOT EXISTS health_url ON health (url, checked_at);
 """
 
@@ -34,7 +39,27 @@ class Store:
         self.db.executescript(SCHEMA)
         if "cycle" not in {c[1] for c in self.db.execute("PRAGMA table_info(results)")}:  # databases from before cycles
             self.db.execute("ALTER TABLE results ADD COLUMN cycle TEXT")
+        if "program_id" not in {c[1] for c in self.db.execute("PRAGMA table_info(health)")}:  # before program ids
+            self.db.execute("ALTER TABLE health ADD COLUMN program_id INTEGER")
         self.lock = threading.Lock()
+
+    def migrate_keys(self, snapshot: dict) -> tuple[int, int]:
+        """Rekey candidates and results stored under "sheet::row::university::program" to "p<id>" of the production
+        program with that legacy_key, university and program name (as the workbook row that made the key read).
+        Returns (keys rewritten, old-form keys left). Idempotent; where the new key already has a row, that row is
+        kept and the old one left."""
+        new = {f"{p['sheet']}::{row}::{p['university']}::{p['program'] or ''}": f"p{p['id']}"
+               for p in snapshot["programs"] if (row := legacy_row(p.get("legacy_key"))) is not None}
+        old = lambda: {k for t in ("candidates", "results")
+                       for (k,) in self.db.execute(f"SELECT DISTINCT row_key FROM {t} WHERE instr(row_key, '::')")}
+        moved = 0
+        with self.lock:
+            for k in sorted(old() & new.keys()):
+                rows = sum(self.db.execute(f"UPDATE OR IGNORE {t} SET row_key=? WHERE row_key=?", (new[k], k)).rowcount
+                           for t in ("candidates", "results"))
+                moved += rows > 0
+            self.db.commit()
+        return moved, len(old())
 
     # pages
     def page(self, url: str) -> dict | None:
@@ -93,10 +118,10 @@ class Store:
 
     # source health checks (health.py): one row per fact per check, so history accumulates
     def save_health(self, rows: list[dict]) -> None:
-        keys = ("url", "quote_key", "sheet", "row", "field", "result", "final_url", "snippet", "score", "detail",
-                "checked_at", "run")
+        keys = ("url", "quote_key", "program_id", "sheet", "row", "field", "result", "final_url", "snippet", "score",
+                "detail", "checked_at", "run")
         with self.lock:
-            self.db.executemany(f"INSERT INTO health VALUES ({','.join('?' * len(keys))})",
+            self.db.executemany(f"INSERT INTO health ({', '.join(keys)}) VALUES ({','.join('?' * len(keys))})",
                                 [tuple(r.get(k) for k in keys) for r in rows])
             self.db.commit()
 
