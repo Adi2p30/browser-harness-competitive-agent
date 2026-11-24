@@ -51,7 +51,8 @@ SQLite gets 400, or 404 in a path.
 
 `/request` is public. Anyone can ask for a school to be added. Sheet names come from the
 template workbook when it can be read. A body over 16 KB gets 413. A filled hidden `website`
-field is accepted and dropped. Control characters become spaces, and a `link` that doesn't
-start with `http://` or `https://` is stored empty. Each client gets 5 submissions an hour,
-counted in memory. IPv6 clients are counted by their /64. Stale entries are swept once more
+field is accepted and dropped. Control and format characters (such as U+202E) become spaces,
+and a `link` that doesn't start with `http://` or `https://` is stored empty. Each client gets 5
+submissions an hour, counted in memory. IPv6 clients are counted by their /64, and IPv4-mapped
+addresses (`::ffff:a.b.c.d`) by their IPv4 address. Stale entries are swept once more
 than 10,000 addresses are tracked.

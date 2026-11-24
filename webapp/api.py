@@ -268,6 +268,8 @@ def _client_key() -> str:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return ip
+    if addr.version == 6 and addr.ipv4_mapped:  # ::ffff:a.b.c.d on a dual-stack bind is an IPv4 client
+        addr = addr.ipv4_mapped
     return str(ipaddress.ip_network(f"{addr}/64", strict=False)) if addr.version == 6 else str(addr)
 
 
@@ -292,8 +294,9 @@ def request_form():
 
 
 def _clean(v: str) -> str:
-    """A public form value: control characters become spaces, then knowledge_base's text form."""
-    return to_text("".join(" " if unicodedata.category(c) == "Cc" else c for c in v[:2000])) or ""
+    """A public form value: control and format characters (U+202E and the like) become spaces, then
+    knowledge_base's text form."""
+    return to_text("".join(" " if unicodedata.category(c) in ("Cc", "Cf") else c for c in v[:2000])) or ""
 
 
 @bp.post("/request")

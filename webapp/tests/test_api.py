@@ -244,8 +244,9 @@ def test_public_request_413_on_oversized_body(env, client):
 def test_public_request_cleans_fields(env, client):
     client.post("/request", data=form(university="CLARK\x00\x1b UNIVERSITY", note="a\nb", link="javascript:alert(1)"))
     client.post("/request", data=form(university="GWU", link="HTTPS://gwu.edu/x"))
+    client.post("/request", data=form(university="YALE‮ UNIVERSITY​"))
     assert [(q["university"], q["note"], q["link"]) for q in db.list_requests(env.conn)] == \
-        [("CLARK UNIVERSITY", "a b", ""), ("GWU", "", "HTTPS://gwu.edu/x")]
+        [("CLARK UNIVERSITY", "a b", ""), ("GWU", "", "HTTPS://gwu.edu/x"), ("YALE UNIVERSITY", "", "")]
 
 
 def post_from(client, n, remote, xff=None):
@@ -266,6 +267,12 @@ def test_rate_limit_trusts_n_proxies(env, client, monkeypatch):
     assert post_from(client, 1, "10.0.0.1", xff="1.1.1.1") == [429]
     assert post_from(client, 1, "10.0.0.1", xff="1.1.1.1, 2.2.2.2") == [302]  # rightmost is what the proxy saw
     assert post_from(client, 1, "10.0.0.1", xff="2.2.2.2, 1.1.1.1") == [429]  # a spoofed left entry is ignored
+
+
+def test_rate_limit_keys_ipv4_mapped_clients_by_their_ipv4(env, client):
+    for i in range(7):
+        assert post_from(client, 1, f"::ffff:10.0.0.{i}") == [302]
+    assert "10.0.0.6" in api._hits
 
 
 def test_rate_limit_keys_ipv6_by_64_and_sweeps(env, client, monkeypatch):
