@@ -51,6 +51,10 @@ def runs(files: list[Path]) -> dict[tuple[str, int, str], str | None]:
     return out
 
 
+FACT = (f"INSERT INTO facts(program_id, field, {', '.join(db.NEW_FIELDS)}, version)"
+        f" VALUES({', '.join('?' * (len(db.NEW_FIELDS) + 3))})")  # a repeated (program, field) raises
+
+
 def find_prior(workbook: Path) -> Path | None:
     """The one OLD *.xlsx next to the workbook, as knowledge_base finds it."""
     olds = sorted(workbook.parent.glob("OLD *.xlsx"))
@@ -58,9 +62,14 @@ def find_prior(workbook: Path) -> Path | None:
 
 
 def import_workbook(workbook: Path, db_path: Path, prior: Path | None = None, by: str = "import") -> dict:
-    """Import into db_path (created if missing) and return the summary. Raises NotEmpty before building anything
-    if the database already has programs or publishes."""
+    """Import into db_path (created if missing) and return the summary. Raises FileNotFoundError for a missing
+    workbook or prior and NotEmpty for a database with programs or publishes, before writing anything; any other
+    failure rolls the whole import back."""
     workbook = Path(workbook)
+    prior = Path(prior) if prior else find_prior(workbook)
+    for path, what in ((workbook, "workbook"), (prior, "prior workbook")):
+        if path and not path.is_file():
+            raise FileNotFoundError(f"no {what} at {path}")
     conn = db.connect(db_path)
     try:
         def check():
@@ -68,7 +77,6 @@ def import_workbook(workbook: Path, db_path: Path, prior: Path | None = None, by
                 raise NotEmpty(f"{db_path} already has programs or publishes; the import only fills an empty database")
 
         check()
-        prior = prior or find_prior(workbook)
         files = versions(workbook)
         reviews = load_reviews(workbook)
         kb = build(str(workbook), str(prior) if prior else None, files, reviews)
@@ -90,7 +98,7 @@ def import_workbook(workbook: Path, db_path: Path, prior: Path | None = None, by
                 p = kb["programs"][f["p"]]
                 key = (p["sheet"], p["row"], f["f"])
                 o = origin(f["s"])
-                conn.execute(db.UPSERT_FACT, (
+                conn.execute(FACT, (
                     ids[f["p"]], f["f"], value, f["s"], f["c"] or None, f["u"] or None, f["q"] or None, o,
                     run_of.get(key) if o == "pipeline" else None,
                     (reviews[key]["reviewer"] or None) if o == "review" else None, 1))
@@ -114,7 +122,7 @@ def main() -> None:
     args = ap.parse_args()
     try:
         s = import_workbook(args.workbook, args.db, args.prior, args.by)
-    except NotEmpty as e:
+    except (NotEmpty, FileNotFoundError) as e:
         print(e, file=sys.stderr)
         sys.exit(1)
     print(f"version {s['version']}: {s['programs']} active + {s['inactive_programs']} inactive programs, "

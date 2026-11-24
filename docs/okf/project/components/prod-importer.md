@@ -18,7 +18,8 @@ one fact.
 - Programs: `legacy_key` is `sheet:row`. Schools only in last year's workbook are imported
   with `active=0` and no key. `link` is the program URL, and `added_by` is `--by` (default
   `import`).
-- Facts: the value goes through `prod.values.to_text`, and blanks are skipped. `status` is the
+- Facts: the value goes through `prod.values.to_text`, and blanks are skipped. Review values
+  pass through `to_text` like every other value. `status` is the
   knowledge-base status unchanged. `origin` maps from it: reviewed → review, a pipeline status
   → pipeline, entered → workbook, prior-year → prior-year. `run` is the pipeline version folder
   for pipeline facts. `reviewed_by` is the reviewer for reviewed facts. Empty cycle, source and

@@ -1,6 +1,7 @@
 """prod.importer: the workbook's knowledge base becomes version 1 of an empty production database."""
 import csv
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -115,11 +116,67 @@ def test_refuses_a_database_with_programs(wb):
     importer.import_workbook(wb, wb.parent / "prod.sqlite")
     with pytest.raises(importer.NotEmpty):
         importer.import_workbook(wb, wb.parent / "prod.sqlite")
-    out = subprocess.run([sys.executable, "-m", "prod.importer", str(wb), str(wb.parent / "prod.sqlite")],
-                         cwd=ROOT / "agent-workspace", capture_output=True, text=True)
+    out = cli(wb)
     assert out.returncode == 1 and "already has programs" in out.stderr
     conn = db.connect(wb.parent / "prod.sqlite", readonly=True)
     assert conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 3
+
+
+def cli(wb, *args):
+    return subprocess.run([sys.executable, "-m", "prod.importer", str(wb), str(wb.parent / "prod.sqlite"), *args],
+                          cwd=ROOT / "agent-workspace", capture_output=True, text=True)
+
+
+def test_missing_workbook_or_prior_exits_cleanly(wb):
+    for out, missing in [(cli(wb.parent / "nope.xlsx"), "no workbook at"),
+                         (cli(wb, "--prior", str(wb.parent / "OLD nope.xlsx")), "no prior workbook at")]:
+        assert out.returncode == 1 and missing in out.stderr and "Traceback" not in out.stderr
+    assert not (wb.parent / "prod.sqlite").exists()
+
+
+def test_added_school_keeps_its_fixed_row(wb):
+    from field_pipeline.workbook import add_school
+    add_school(wb, "MS HRM", "Boston College", program="MS HRM", website_link="https://bc.edu/hrm")
+    _, snap = imported(wb)
+    bc = next(p for p in snap["programs"] if p["university"] == "BOSTON COLLEGE")
+    assert (bc["legacy_key"], bc["active"], bc["link"]) == ("MS HRM:10001", 1, "https://bc.edu/hrm")
+
+
+def test_run_of_each_pipeline_fact(wb):
+    """The pre-versioning root decisions.csv has no run; each versioned run names the cells it filled."""
+    base = wb.parent / f"{wb.stem}_field_pipeline"
+    for path, row, field in [(base / "decisions.csv", 2, "Average Post-Grad Salary"),
+                             (base / "runs" / "2026-11-10_000000" / "decisions.csv", 3, "Average GMAT")]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, DECISION_COLUMNS)
+            w.writeheader()
+            w.writerow({"sheet": "MS HRM", "row": row, "university": "", "program": "", "field": field,
+                        "status": "found", "cycle": "", "value": "1", "source_url": URL, "quote": "", "detail": ""})
+    summary, snap = imported(wb)
+    keys = {p["id"]: p["legacy_key"] for p in snap["programs"]}
+    runs = {(keys[f["program_id"]], f["field"]): f["run"] for f in snap["facts"] if f["origin"] == "pipeline"}
+    assert runs == {("MS HRM:2", "Credit Hours"): RUN, ("MS HRM:2", "Average Post-Grad Salary"): None,
+                    ("MS HRM:3", "Average GMAT"): "2026-11-10_000000"}
+    assert summary["pipeline_versions"] == 3
+
+
+def test_failure_mid_import_rolls_back_everything(wb, monkeypatch):
+    real = importer.build
+
+    def repeated_fact(*a):  # a (program, field) twice must fail, not overwrite
+        kb = real(*a)
+        kb["facts"].append(kb["facts"][-1])
+        return kb
+
+    monkeypatch.setattr(importer, "build", repeated_fact)
+    with pytest.raises(sqlite3.IntegrityError):
+        importer.import_workbook(wb, wb.parent / "prod.sqlite")
+    conn = db.connect(wb.parent / "prod.sqlite", readonly=True)
+    assert [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("programs", "facts", "publishes")] == [
+        0, 0, 0]
+    monkeypatch.setattr(importer, "build", real)
+    assert importer.import_workbook(wb, wb.parent / "prod.sqlite")["facts"] == 5
 
 
 def test_origin():
