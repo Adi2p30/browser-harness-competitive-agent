@@ -17,14 +17,16 @@ openpyxl = pytest.importorskip("openpyxl")
 from field_pipeline import review  # noqa: E402
 from field_pipeline import __main__ as pipeline  # noqa: E402
 from field_pipeline.store import Store  # noqa: E402
-from field_pipeline.workbook import legacy_ids, read_rows, snapshot_path  # noqa: E402
+from field_pipeline import csvlog  # noqa: E402
+from field_pipeline.workbook import legacy_programs, read_rows, ref_of, snapshot_path  # noqa: E402
 from knowledge_base.__main__ import build, versions  # noqa: E402
 from prod import db, diff  # noqa: E402
 
 HEAD = ["University Name", "School/College Name", "Program Name", "Website Link", "Credit Hours", "Average GMAT",
         "Ranking (QS)", "Female %"]
-DECISION_COLUMNS = ["program_id", "sheet", "row", "university", "program", "field", "status", "cycle", "value",
-                    "source_url", "quote", "detail"]
+DECISION_COLUMNS = ["sheet", "row", "university", "program", "field", "status", "cycle", "value", "source_url", "quote",
+                    "detail", "program_id"]
+OLD_REVIEW_COLUMNS = review.REVIEW_COLUMNS[:-1]
 URL = "https://purdue.edu/hrm"
 RUN = "2026-11-24_100000"
 
@@ -181,7 +183,7 @@ def test_review_queue_by_program_id_and_excel_round_trip(wb, tmp_path):
 def test_recheck_rows_map_by_program_id_or_legacy_key(wb, tmp_path):
     path = tmp_path / "recheck.csv"
     path.write_text("program_id,sheet,row,field\n2,MS HRM,,Credit Hours\n,MS HRM,2,Average GMAT\n,MS HRM,9,X\n")
-    assert pipeline.read_recheck(path, legacy_ids(snap_of(wb))) == {2: {"Credit Hours"}, 1: {"Average GMAT"},
+    assert pipeline.read_recheck(path, legacy_programs(snap_of(wb))) == {2: {"Credit Hours"}, 1: {"Average GMAT"},
                                                                     None: {"X"}}
 
 
@@ -245,13 +247,117 @@ def test_runs_csv_gains_the_programs_column(tmp_path):
     runs = tmp_path / "Book_field_pipeline" / "runs"
     runs.mkdir(parents=True)
     old_head = [c for c in pipeline.RUN_COLUMNS if c != "programs"]
-    (runs.parent / "runs.csv").write_text(",".join(old_head) + "\n" + ",".join(["2026-11-01_000000"] + [""] * 12)
-                                          + "\n")
+    old = ",".join(old_head) + "\n" + ",".join(["2026-11-01_000000"] + [""] * 12) + "\n"
+    (runs.parent / "runs.csv").write_text(old)
     out = pipeline.version_dir(tmp_path / "Book.xlsx", False)
     pipeline.record_run(out, 0, "done", Namespace(fresh=False, browser="local", sheet=["MS HRM"], only=None,
                                                   program=[2, 5], limit=None), {"rows": 2})
     with open(runs.parent / "runs.csv", newline="", encoding="utf-8") as f:
         got = list(csv.DictReader(f))
-    assert [(r["version"], r["programs"]) for r in got] == [("2026-11-01_000000", ""), (out.name, "2; 5")]
+    assert [(r["version"], r["programs"]) for r in got] == [("2026-11-01_000000", None), (out.name, "2; 5")]
+    text = (runs.parent / "runs.csv").read_text()
+    assert text.startswith(",".join(pipeline.RUN_COLUMNS) + "\n" + old.split("\n", 1)[1]) and "\r" not in text
     (out / "decisions.csv").write_text(",".join(DECISION_COLUMNS) + "\n")
     assert review.list_runs(tmp_path / "Book.xlsx")[0]["label"].endswith("· MS HRM · program 2; 5 · 2 rows")
+
+
+def old_log(path, rows, columns=OLD_REVIEW_COLUMNS, bom=False):
+    """A reviews.csv as code from before program ids wrote it (CRLF), optionally re-saved by Excel with a BOM."""
+    with open(path, "w", newline="", encoding="utf-8-sig" if bom else "utf-8") as f:
+        w = csv.DictWriter(f, columns)
+        w.writeheader()
+        w.writerows(rows)
+
+
+def old_review(field, row=2, university="PURDUE UNIVERSITY", **kw):
+    return {"sheet": "MS HRM", "row": row, "university": university, "program": "HRM", "field": field,
+            "decision": "value", "value": "1", "source_url": URL, "quote": "", "note": "", "reviewer": "bo",
+            "at": "2026-11-01T00:00:00", **kw}
+
+
+def test_old_review_log_is_upgraded_in_place(wb):
+    path = review.reviews_path(wb)
+    old_log(path, [old_review("Average GMAT")])
+    before = path.read_bytes()
+    new = {**old_review("Female %", row=None, university="EMORY UNIVERSITY"), "program_id": 2}
+    review.append_reviews(wb, [new])
+    after = path.read_bytes()
+    assert after.startswith(",".join(review.REVIEW_COLUMNS).encode() + b"\r\n" + before.split(b"\r\n", 1)[1])
+    assert path.with_name("reviews.csv.pre-program-id").read_bytes() == before
+    review.append_reviews(wb, [new])  # already upgraded: a plain append, the backup untouched
+    assert path.read_bytes() == after + after.split(b"\r\n")[-2] + b"\r\n"
+    assert path.with_name("reviews.csv.pre-program-id").read_bytes() == before
+    with open(path, "a", newline="", encoding="utf-8") as f:  # an older checkout appends 12 columns
+        csv.DictWriter(f, OLD_REVIEW_COLUMNS).writerow(old_review("Ranking (QS)"))
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, review.REVIEW_COLUMNS).writerow({**old_review("Credit Hours"), "program_id": "seven"})
+    assert set(review.load_reviews(wb, snap_of(wb))) == {(1, "Average GMAT"), (2, "Female %"), (1, "Ranking (QS)")}
+
+
+def test_excel_bom_header_is_read_and_upgraded(wb):
+    path = review.reviews_path(wb)
+    old_log(path, [old_review("Average GMAT")], bom=True)
+    assert set(review.load_reviews(wb, snap_of(wb))) == {(1, "Average GMAT")}
+    review.append_reviews(wb, [{**old_review("Female %"), "program_id": 1}])
+    assert not path.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert set(review.load_reviews(wb, snap_of(wb))) == {(1, "Average GMAT"), (1, "Female %")}
+
+
+def test_unknown_header_is_refused(wb):
+    path = review.reviews_path(wb)
+    old_log(path, [old_review("Average GMAT")], columns=[*OLD_REVIEW_COLUMNS[:5], "extra", *OLD_REVIEW_COLUMNS[5:]])
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="reviews.csv: its columns .* are not an older form"):
+        review.append_reviews(wb, [old_review("Female %")])
+    assert path.read_bytes() == before
+
+
+def test_a_crash_while_upgrading_leaves_the_log_intact(wb, monkeypatch):
+    path = review.reviews_path(wb)
+    old_log(path, [old_review("Average GMAT")])
+    before = path.read_bytes()
+
+    def crash(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(csvlog.os, "replace", crash)
+    with pytest.raises(OSError, match="disk full"):
+        review.append_reviews(wb, [old_review("Female %")])
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in path.parent.iterdir()) == [".reviews.csv.lock", "prod-snapshot.json", "reviews.csv",
+                                                             "reviews.csv.pre-program-id"]
+
+
+def test_old_rows_of_a_reordered_workbook_are_unmapped(wb):
+    """Row 2 was GWU when this row was written; production's MS HRM:2 is Purdue, so it is no program's."""
+    legacy = legacy_programs(snap_of(wb))
+    assert ref_of({"sheet": "MS HRM", "row": "2", "university": "George Washington University"}, legacy) is None
+    assert ref_of({"sheet": "MS HRM", "row": "2", "university": "purdue  university"}, legacy) == 1
+    assert ref_of({"sheet": "MS HRM", "row": "2", "university": ""}, legacy) == 1
+    decisions(wb, [])
+    with open(versions(wb)[0], "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, DECISION_COLUMNS).writerow({
+            "sheet": "MS HRM", "row": 2, "university": "GEORGE WASHINGTON UNIVERSITY", "field": "Average GMAT",
+            "status": "found", "value": "700"})
+    assert build(str(wb), None, versions(wb), snapshot=snap_of(wb))["facts"] == []
+
+
+def test_import_skips_a_non_numeric_program_id(wb, tmp_path):
+    decisions(wb, [(1, 2, "Average GMAT", "bad-value", "650")])
+    items = review.build_queue(wb, db=tmp_path / "p.sqlite")
+    path = review.export_xlsx(items, tmp_path / "queue.xlsx")
+    book = openpyxl.load_workbook(path)
+    ws = book["Review queue"]
+    col = {c.value: c.column for c in ws[1]}
+    ws.cell(2, col["Program ID"]).value, ws.cell(2, col["Decision"]).value = "one", "accept"
+    book.save(path)
+    rows, problems = review.import_xlsx(path, items, "")
+    assert rows == [] and "program id 'one'" in problems[0]
+
+
+def test_append_without_fcntl(tmp_path, monkeypatch):
+    monkeypatch.setattr(csvlog, "fcntl", None)
+    path = tmp_path / "log.csv"
+    csvlog.append_csv(path, ["a", "b"], [{"a": 1}])
+    csvlog.append_csv(path, ["a", "b"], [{"b": 2}])
+    assert path.read_bytes() == b"a,b\r\n1,\r\n,2\r\n" and not (tmp_path / ".log.csv.lock").exists()

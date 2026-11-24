@@ -35,7 +35,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .fields import FILLED, field_for
-from .workbook import append_csv, legacy_ids, load_snapshot, ref_of
+from .csvlog import append_csv
+from .workbook import legacy_programs, load_snapshot, ref_of
 
 GROUPS = {
     "candidate": "Rejected value to check",
@@ -74,8 +75,8 @@ WHY = {  # pipeline statuses in plain words
     "out-of-range": "the value found is implausible",
 }
 DECISIONS = ("accept", "value", "keep", "no", "not-ranked", "not-published", "undo")
-REVIEW_COLUMNS = ["program_id", "sheet", "row", "university", "program", "field", "decision", "value", "source_url",
-                  "quote", "note", "reviewer", "at"]
+REVIEW_COLUMNS = ["sheet", "row", "university", "program", "field", "decision", "value", "source_url", "quote", "note",
+                  "reviewer", "at", "program_id"]  # new columns go last (csvlog)
 _lock = threading.Lock()
 
 
@@ -90,8 +91,8 @@ def load_reviews(workbook: Path, snapshot: dict | None = None) -> dict[tuple[int
     out: dict[tuple[int | str, str], dict] = {}
     if not path.exists():
         return out
-    legacy = legacy_ids(snapshot)
-    with open(path, newline="", encoding="utf-8") as f:
+    legacy = legacy_programs(snapshot)
+    with open(path, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             if (ref := ref_of(r, legacy)) is None:
                 continue
@@ -144,7 +145,7 @@ def list_runs(workbook: Path) -> list[dict]:
     index = workbook.with_name(f"{workbook.stem}_field_pipeline") / "runs.csv"
     info = {}
     if index.exists():
-        with open(index, newline="", encoding="utf-8") as f:
+        with open(index, newline="", encoding="utf-8-sig") as f:
             info = {r["version"]: r for r in csv.DictReader(f)}
     out = []
     for path in reversed(versions(workbook)):
@@ -187,7 +188,7 @@ def queue(workbook: Path, prior: Path | None = None, db: Path | None = None, run
     if run is not None and not scope:
         raise ValueError(f"no run '{run}'")
     snap = load_snapshot(workbook)
-    legacy = legacy_ids(snap)
+    legacy = legacy_programs(snap)
     reviewed = load_reviews(workbook, snap)
     kb = build(str(workbook), str(prior) if prior else None, files, reviewed, snap)
     attach_health(kb, db or DEFAULT_DB)
@@ -360,8 +361,13 @@ def import_xlsx(path: Path, items: list[dict], reviewer: str) -> tuple[list[dict
         if not decision:
             continue
         pid, row = get("Program ID"), get("Row")
-        item = (by_id.get(item_id(int(float(pid)), get("Field"))) if pid
-                else by_cell.get((get("Sheet"), int(float(row)), get("Field"))) if row else None)
+        try:
+            item = (by_id.get(item_id(int(float(pid)), get("Field"))) if pid
+                    else by_cell.get((get("Sheet"), int(float(row)), get("Field"))) if row else None)
+        except ValueError:
+            problems.append(f"row {n}: {get('University')} / {get('Field')}: program id {pid!r} or row {row!r} is not a"
+                            " number")
+            continue
         if item is None:
             problems.append(f"row {n}: {get('University')} / {get('Field')} is no longer in the queue")
             continue

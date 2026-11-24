@@ -73,18 +73,28 @@ Expect about 5 minutes per school with the cloud browser.
 Once an admin has pulled the production database's snapshot (`python -m prod.client pull <workbook>`, saved to
 `<workbook>_field_pipeline/prod-snapshot.json`), a run works on production's active programs instead of the
 workbook's rows, and identifies each by its permanent program id. The workbook is then only the template for each
-sheet's columns. Without a snapshot a run uses the workbook's rows, as before, and says so in its log.
+sheet's columns: a row added to it is skipped (the log counts them), and new programs come through
+`python -m prod.client add-program`. Without a snapshot a run uses the workbook's rows, as before, and says so in
+its log.
 
 - A program's fields to research are the sheet's columns with no current production fact (last year's values
-  don't count) and that its own school, program name and link don't already fill. `--overwrite` and `--fresh`
-  research the rest too.
+  don't count) and that its own school, program name and link don't already fill.
+- `--overwrite` also researches the cells production already has a value for, reusing stored pages and results;
+  `--fresh` does that with every page fetched again and no stored result reused.
 - `--program <id>` (repeatable) researches just those programs; `--sheet` and `--only` still work.
 - A program added with `python -m prod.client add-program` has no workbook row. It is researched like any other,
   and its results are in `decisions.csv` but not in the run's workbook copy.
-- `decisions.csv`, `reviews.csv` and the health check's `recheck.csv` carry a `program_id` column. Rows written
-  before program ids map to a program by its legacy key (`sheet:row`).
-- The first run with a snapshot moves pipeline.sqlite's stored results from the old row keys to the program ids,
-  so earlier work is still reused.
+- `decisions.csv`, `reviews.csv` and the health check's `recheck.csv` carry a `program_id` column (the last one).
+  Rows written before program ids map to a program by its legacy key (`sheet:row`) when the university they name
+  is that program's.
+- `reviews.csv` and `runs.csv` from before program ids get the new column in their header line on the next write.
+  The rewrite is atomic, keeps every row byte for byte, holds a file lock, and keeps the old file once as
+  `reviews.csv.pre-program-id` / `runs.csv.pre-program-id`. A header that isn't an older form of the current one
+  stops the write with an error instead.
+- The first run with a snapshot moves pipeline.sqlite's stored results from the old row keys to `p<id>` keys, so
+  earlier work is still reused. There is no rollback: older code can't find results under `p<id>` keys, and the
+  `health` table gains a `program_id` column that older code's health check can't insert into. Don't share a
+  pipeline.sqlite with an older checkout; copy it first if you need one.
 
 Schools added earlier with the retired `field_pipeline.schools` command live in
 `<workbook>.added_schools.csv`; the workbook reader still merges them in as rows numbered from 10001, so the

@@ -29,7 +29,7 @@ from field_pipeline.health import quote_key
 from field_pipeline.review import load_reviews
 from field_pipeline.store import DEFAULT_DB, Store
 from field_pipeline.validate import NUMERIC, to_number
-from field_pipeline.workbook import (headers, id_values, legacy_ids, load_added, load_snapshot, read_rows, read_values,
+from field_pipeline.workbook import (headers, id_values, legacy_programs, load_added, load_snapshot, read_rows, read_values,
                                      ref_of)
 
 from openpyxl import load_workbook
@@ -81,7 +81,7 @@ def versions(workbook: Path) -> list[Path]:
     return [p for p in [base / "decisions.csv", *sorted(base.glob("runs/*/decisions.csv"))] if p.exists()]
 
 
-def decisions(paths: list[Path], legacy: dict[str, int] | None = None) -> dict[tuple[int | str, str], dict]:
+def decisions(paths: list[Path], legacy: dict[str, dict] | None = None) -> dict[tuple[int | str, str], dict]:
     """Filled cells, keyed (program ref, field) as field_pipeline.workbook.ref_of gives them; a later file replaces an
     earlier one's value for the same cell, a blank never does."""
     out = {}
@@ -130,7 +130,7 @@ def build(workbook: str, prior_path: str | None, decision_files: list[Path],
     (negative with a snapshot)."""
     reviews = load_reviews(Path(workbook), snapshot) if reviews is None else reviews
     cols, rows = read_rows(workbook, snapshot=snapshot)
-    now, found = current_values(workbook), decisions(decision_files, legacy_ids(snapshot))
+    now, found = current_values(workbook), decisions(decision_files, legacy_programs(snapshot))
     own = count() if snapshot is None else count(-1, -1)
     prior: dict[str, list[tuple[str, dict]]] = {}
     for (sheet, univ), recs in (read_values(prior_path) if prior_path else {}).items():

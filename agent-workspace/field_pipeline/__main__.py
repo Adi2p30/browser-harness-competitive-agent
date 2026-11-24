@@ -40,7 +40,8 @@ from .fields import FILLED, plan, usnews_kind
 from .ipeds import Ipeds, page_cip
 from .retrieve import chunk_pages
 from .store import DEFAULT_DB, Store
-from .workbook import (append_csv, legacy_ids, load_snapshot, read_rows, read_values, ref_of, selection_notes,
+from .csvlog import append_csv
+from .workbook import (legacy_programs, load_snapshot, read_rows, read_values, ref_of, selection_notes,
                        snapshot_path, write)
 
 log = logging.getLogger("field_pipeline")
@@ -110,10 +111,10 @@ def apply_ipeds(ip: Ipeds, store: Store, row, wanted: dict, results: dict, confe
                                     f"{what}", "cycle": f"IPEDS {got.span}"}
 
 
-def read_recheck(path: Path, legacy: dict[str, int] | None = None) -> dict[int | str, set[str]]:
+def read_recheck(path: Path, legacy: dict[str, dict] | None = None) -> dict[int | str, set[str]]:
     """{program ref: fields} from a health check's recheck.csv (workbook.ref_of)."""
     out: dict[int | str, set[str]] = {}
-    with open(path, newline="", encoding="utf-8") as f:
+    with open(path, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             out.setdefault(ref_of(r, legacy), set()).add(r["field"])
     return out
@@ -251,17 +252,17 @@ def version_dir(src: Path, fresh: bool) -> Path:
     return out
 
 
-RUN_COLUMNS = ["version", "started", "minutes", "status", "fresh", "browser", "sheets", "only", "programs", "limit",
-               "rows", "cells_written", "status_counts", "command"]
+RUN_COLUMNS = ["version", "started", "minutes", "status", "fresh", "browser", "sheets", "only", "limit", "rows",
+               "cells_written", "status_counts", "command", "programs"]  # new columns go last (csvlog)
 
 
 def record_run(out_dir: Path, started: float, status: str, args, summary: dict) -> None:
     """Append this run to runs.csv next to the runs/ folder (the list of versions)."""
     values = [out_dir.name, datetime.fromtimestamp(started).isoformat(timespec="seconds"),
               round((time.time() - started) / 60, 1), status, args.fresh, args.browser,
-              "; ".join(args.sheet or ["all"]), "; ".join(args.only or []), "; ".join(map(str, args.program or [])),
-              args.limit or "", summary.get("rows", ""), summary.get("written", ""), summary.get("tally", ""),
-              shlex.join(["python", "-m", "field_pipeline", *sys.argv[1:]])]
+              "; ".join(args.sheet or ["all"]), "; ".join(args.only or []), args.limit or "", summary.get("rows", ""),
+              summary.get("written", ""), summary.get("tally", ""),
+              shlex.join(["python", "-m", "field_pipeline", *sys.argv[1:]]), "; ".join(map(str, args.program or []))]
     append_csv(out_dir.parent.parent / "runs.csv", RUN_COLUMNS, [dict(zip(RUN_COLUMNS, values))])
 
 
@@ -278,6 +279,12 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
         log.info("programs from the production snapshot (version %s)%s", snap["version"],
                  f"; {moved} stored row key(s) moved to program ids, {kept} left" if moved else "")
     columns, rows = read_rows(str(src), args.sheet, snap)
+    if snap is not None:
+        used = {(r.sheet, r.row) for r in rows}
+        if skipped := [r for r in read_rows(str(src), args.sheet)[1] if (r.sheet, r.row) not in used]:
+            log.info("%d workbook row(s) not in production skipped (the workbook is only a template now; add a "
+                     "program with python -m prod.client add-program): %s", len(skipped),
+                     [f"{r.sheet}:{r.row} {r.university}" for r in skipped[:5]])
     olds = sorted(src.parent.glob("OLD *.xlsx"))
     prior_path = None if args.no_prior else args.prior or (olds[0] if len(olds) == 1 else None)
     prior = read_values(str(prior_path)) if prior_path else {}
@@ -303,7 +310,7 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
         rows = [r for r in rows if r.program_id in set(args.program)]
         if not rows:
             raise NothingToDo(f"no active program {' or '.join(map(str, args.program))} on the chosen sheets")
-    recheck = read_recheck(args.recheck, legacy_ids(snap)) if args.recheck else None
+    recheck = read_recheck(args.recheck, legacy_programs(snap)) if args.recheck else None
     if recheck is not None:
         rows = [r for r in rows if r.ref in recheck]
         log.info("recheck: %d cell(s) on %d row(s) from %s", sum(map(len, recheck.values())), len(rows), args.recheck)
@@ -476,11 +483,11 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
     written = write(str(src), str(dest), [c for c in cells if c[1] is not None])
     with open(out_dir / "decisions.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["program_id", "sheet", "row", "university", "program", "field", "status", "cycle", "value",
-                    "source_url", "quote", "detail"])
+        w.writerow(["sheet", "row", "university", "program", "field", "status", "cycle", "value", "source_url", "quote",
+                    "detail", "program_id"])
         for row, c, r in decisions:
-            w.writerow([row.program_id, row.sheet, row.row, row.university, row.program, c, r.get("status"),
-                        r.get("cycle"), r.get("value"), r.get("url"), r.get("quote"), r.get("detail")])
+            w.writerow([row.sheet, row.row, row.university, row.program, c, r.get("status"), r.get("cycle"),
+                        r.get("value"), r.get("url"), r.get("quote"), r.get("detail"), row.program_id])
     total = sum(tally.values())
     findable = total - tally["not-published"]  # cells the program publishes at all
     log.info("DONE: %d cells written -> %s | %.1f min for %d row(s)", written, dest, (time.time() - started) / 60,

@@ -75,42 +75,30 @@ def legacy_row(key: str | None) -> int | None:
     return int(m.group(1))
 
 
-def legacy_ids(snapshot: dict | None) -> dict[str, int] | None:
-    """{legacy_key: program id} of a snapshot; None without one."""
+def legacy_programs(snapshot: dict | None) -> dict[str, dict] | None:
+    """{legacy_key: program} of a snapshot; None without one."""
     if snapshot is None:
         return None
-    return {p["legacy_key"]: p["id"] for p in snapshot["programs"] if p.get("legacy_key")}
+    return {p["legacy_key"]: p for p in snapshot["programs"] if p.get("legacy_key")}
 
 
-def ref_of(d: dict, legacy: dict[str, int] | None) -> int | str | None:
+def ref_of(d: dict, legacy: dict[str, dict] | None) -> int | str | None:
     """The ref (see Row.ref) of a decisions / reviews / recheck row or a knowledge-base program. With a snapshot
-    (legacy = legacy_ids(snapshot)) that is its program_id; a row written before program ids maps by its legacy key
-    "sheet:row", None when no program has it."""
+    (legacy = legacy_programs(snapshot)) that is its program_id. A row written before program ids maps by its legacy
+    key "sheet:row" when the university it names (if any) is that program's, as in snapshot_rows and the store
+    migration. None when nothing matches or the program_id isn't a whole number."""
     key = f"{d['sheet']}:{'' if d.get('row') is None else d['row']}"
     if legacy is None:
         return key
-    return int(d["program_id"]) if d.get("program_id") not in (None, "") else legacy.get(key)
-
-
-def append_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
-    """Append rows to a CSV log, first giving a log started before `columns` grew the new columns (blank in its old
-    rows)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        with open(path, newline="", encoding="utf-8") as f:
-            r = csv.DictReader(f)
-            old = None if r.fieldnames == columns else list(r)
-        if old is not None:
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, columns, extrasaction="ignore")
-                w.writeheader()
-                w.writerows(old)
-    new = not path.exists()
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, columns, extrasaction="ignore")
-        if new:
-            w.writeheader()
-        w.writerows(rows)
+    if (pid := d.get("program_id")) not in (None, ""):
+        try:
+            return int(pid)
+        except (TypeError, ValueError):
+            return None
+    p = legacy.get(key)
+    if p is None or (d.get("university") and _norm(d["university"]) != _norm(p["university"])):
+        return None
+    return p["id"]
 
 
 ADDED_FIRST_ROW = 10001

@@ -20,7 +20,8 @@ workbook. Imports `browser_harness.admin`/`helpers` in-process for local-mode br
 
 Once an admin has pulled production's snapshot (`python -m prod.client pull`), the rows are
 production's active programs, identified by program id (`--program <id>` picks some), and the
-workbook only supplies each sheet's columns. A program's blanks are the columns with no current
+workbook only supplies each sheet's columns (rows not in production are skipped; new programs
+come through `prod.client add-program`). A program's blanks are the columns with no current
 production fact. Without a snapshot the rows are the workbook's, keyed `sheet:row`. Results,
 reviews, recheck rows and the stored page results all follow that key; files from before
 program ids map by legacy key (`agent-workspace/field_pipeline/workbook.py:ref_of`).

@@ -260,9 +260,9 @@ def setup_logging(out: Path, verbose: bool) -> None:
     logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 
-HEALTH_COLUMNS = ["program_id", "sheet", "row", "university", "program", "field", "status", "value", "result", "url",
-                  "final_url", "quote", "snippet", "score", "detail"]
-RECHECK_COLUMNS = ["program_id", "sheet", "row", "university", "program", "field", "result", "url"]
+HEALTH_COLUMNS = ["sheet", "row", "university", "program", "field", "status", "value", "result", "url", "final_url",
+                  "quote", "snippet", "score", "detail", "program_id"]
+RECHECK_COLUMNS = ["sheet", "row", "university", "program", "field", "result", "url", "program_id"]
 
 
 def write_outputs(out: Path, rows: list[dict]) -> list[dict]:

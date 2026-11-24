@@ -42,7 +42,7 @@ def origin(status: str) -> str:
     raise ValueError(f"unknown knowledge-base status {status!r}")
 
 
-def runs(files: list[Path], legacy: dict[str, int] | None = None) -> dict[tuple[int | str, str], str | None]:
+def runs(files: list[Path], legacy: dict[str, dict] | None = None) -> dict[tuple[int | str, str], str | None]:
     """{(program ref, field): version folder of the run whose value won}, by knowledge_base.decisions' rule (refs as
     field_pipeline.workbook.ref_of gives them); None for the decisions.csv written before versioning."""
     out = {}

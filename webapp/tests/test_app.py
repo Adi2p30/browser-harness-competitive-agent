@@ -119,23 +119,27 @@ class _Path(type(Path())):  # a Path that can carry test notes
     pass
 
 
-def _review_setup(tmp_path, monkeypatch):
-    """A queue of two cells of production program 7 (legacy row MS HRM:2), with the admin's snapshot pulled."""
+def _review_setup(tmp_path, monkeypatch, snapshot=True):
+    """A queue of two cells of production program 7 (legacy row MS HRM:2), with the admin's snapshot pulled; or,
+    without a snapshot, of workbook row MS HRM:2."""
     import json
     xlsx = _Path(tmp_path) / "EDIT Competitive Analysis Research 2026-2027.xlsx"
     xlsx.write_bytes(b"")
     snap = webapp.snapshot_path(xlsx)
     snap.parent.mkdir()
-    snap.write_text(json.dumps({"version": 1, "facts": [], "programs": [
-        {"id": 7, "sheet": "MS HRM", "university": "PURDUE", "school": "", "program": "HRM", "link": "", "active": 1,
-         "legacy_key": "MS HRM:2"}]}))
-    base = {"program_id": 7, "sheet": "MS HRM", "row": 2, "university": "PURDUE", "program": "HRM",
+    if snapshot:
+        snap.write_text(json.dumps({"version": 1, "facts": [], "programs": [
+            {"id": 7, "sheet": "MS HRM", "university": "PURDUE", "school": "", "program": "HRM", "link": "",
+             "active": 1, "legacy_key": "MS HRM:2"}]}))
+    ref = 7 if snapshot else "MS HRM:2"
+    base = {"program_id": 7 if snapshot else None, "sheet": "MS HRM", "row": 2, "university": "PURDUE",
+            "program": "HRM",
             "status": "bad-value",
             "quote": "Average GMAT 650", "url": "https://purdue.edu/hrm", "detail": "names 2019-2020", "snippet": "",
             "why": "a value was found but failed a check (names 2019-2020)", "yesno": False,
             "run": "r1", "last_year": "640", "last_year_url": "", "program_url": "https://purdue.edu/hrm"}
-    items = [{**base, "id": "7|Average GMAT", "field": "Average GMAT", "group": "candidate", "value": "650"},
-             {**base, "id": "7|Ranking (QS)", "field": "Ranking (QS)", "group": "ranking", "value": "",
+    items = [{**base, "id": f"{ref}|Average GMAT", "field": "Average GMAT", "group": "candidate", "value": "650"},
+             {**base, "id": f"{ref}|Ranking (QS)", "field": "Ranking (QS)", "group": "ranking", "value": "",
               "status": "not-found", "quote": "", "url": ""}]
     monkeypatch.setattr(webapp, "_xlsx", lambda: xlsx)
     asked = []
@@ -143,8 +147,8 @@ def _review_setup(tmp_path, monkeypatch):
     def fake_queue(x, run):
         asked.append(run)
         done = webapp.review.load_reviews(x, webapp.load_snapshot(x))
-        return {"items": [i for i in items if (7, i["field"]) not in done], "run": run, "filled_elsewhere": 2,
-                "reviewed": 0, "cells": {(7, i["field"]) for i in items}, "reviews": done}
+        return {"items": [i for i in items if (ref, i["field"]) not in done], "run": run, "filled_elsewhere": 2,
+                "reviewed": 0, "cells": {(ref, i["field"]) for i in items}, "reviews": done}
 
     monkeypatch.setattr(webapp, "_queue", fake_queue)
     monkeypatch.setattr(webapp.review, "list_runs", lambda x: [
@@ -181,6 +185,18 @@ def test_review_decide_and_undo(client, tmp_path, monkeypatch):
     assert reviews(xlsx) == {} and "Average+GMAT+for+PURDUE" in r.headers["Location"]
 
 
+def test_review_decide_and_undo_without_a_snapshot(client, tmp_path, monkeypatch):
+    c, _ = client
+    xlsx = _review_setup(tmp_path, monkeypatch, snapshot=False)
+    r = c.post("/review/decide", data={"id": "MS HRM:2|Average GMAT", "decision": "accept", "group": "candidate"})
+    assert r.status_code == 302 and "msg=" in r.headers["Location"]
+    saved = reviews(xlsx)[("MS HRM:2", "Average GMAT")]
+    assert (saved["value"], saved["row"], saved["program_id"]) == ("650", "2", "")
+    assert 'value="MS HRM:2|Average GMAT"' in c.get("/review?group=reviewed").get_data(as_text=True)
+    c.post("/review/undo", data={"id": "MS HRM:2|Average GMAT"})
+    assert reviews(xlsx) == {}
+
+
 def test_review_undo_of_a_decision_from_before_program_ids(client, tmp_path, monkeypatch):
     """A reviews.csv row without program_id is the program with its legacy key; the log gains the column."""
     c, _ = client
@@ -190,7 +206,10 @@ def test_review_undo_of_a_decision_from_before_program_ids(client, tmp_path, mon
                     "MS HRM,2,PURDUE,HRM,Average GMAT,accept,650,,,,Bo,2026-11-01T00:00:00\n")
     assert reviews(xlsx)[(7, "Average GMAT")]["reviewer"] == "Bo"
     c.post("/review/undo", data={"id": "7|Average GMAT"})
-    assert reviews(xlsx) == {} and path.read_text().splitlines()[0].startswith("program_id,sheet,row,")
+    lines = path.read_text().splitlines()
+    assert reviews(xlsx) == {} and lines[0].endswith(",reviewer,at,program_id")
+    assert lines[1].endswith(",Bo,2026-11-01T00:00:00")  # the old row, unchanged
+    assert path.with_name("reviews.csv.pre-program-id").exists()
 
 
 def reviews(xlsx):

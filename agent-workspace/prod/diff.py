@@ -17,7 +17,7 @@ from pathlib import Path
 
 from field_pipeline.fields import FILLED
 from field_pipeline.review import load_reviews
-from field_pipeline.workbook import legacy_ids, load_snapshot, ref_of
+from field_pipeline.workbook import legacy_programs, load_snapshot, ref_of
 from knowledge_base.__main__ import build, versions
 
 from .importer import find_prior, not_published, origin, runs
@@ -38,7 +38,7 @@ def _norm(s) -> str:
 def match(programs: list[dict], snapshot: dict) -> tuple[dict, list[dict]]:
     """({local program id: production id}, unmapped local programs each with a "reason")."""
     active = {p["id"] for p in snapshot["programs"] if p.get("active", 1)}
-    by_key = {p["legacy_key"]: p for p in snapshot["programs"] if p.get("legacy_key")}
+    by_key = {p["legacy_key"]: p for p in snapshot["programs"] if p.get("legacy_key") and p.get("active", 1)}
     keyless = defaultdict(list)
     for p in snapshot["programs"]:
         if not p.get("legacy_key") and p.get("active", 1):
@@ -49,6 +49,7 @@ def match(programs: list[dict], snapshot: dict) -> tuple[dict, list[dict]]:
             continue
         if p.get("program_id") in active:
             ids[p["id"]] = p["program_id"]
+            taken.add(p["program_id"])
             continue
         if (target := by_key.get(f"{p['sheet']}:{p['row']}")) is not None:
             if _norm(target["university"]) != _norm(p["university"]):
@@ -73,7 +74,7 @@ def compare(workbook: Path, snapshot: dict, prior: Path | None = None) -> tuple[
     prior = prior or find_prior(workbook)
     files = versions(workbook)
     local = load_snapshot(workbook)
-    legacy = legacy_ids(local)
+    legacy = legacy_programs(local)
     reviews = load_reviews(workbook, local)
     kb = build(str(workbook), str(prior) if prior else None, files, reviews, local)
     run_of = runs(files, legacy)
