@@ -24,7 +24,7 @@
     <tr class="status-{{ d.status }}">
       <td>{{ d.sheet }}</td><td>{{ d.university }}</td><td>{{ d.field }}</td>
       <td>{{ d.status }}</td><td>{{ d.value }}</td>
-      <td>{% if d.source_url %}<a href="{{ d.source_url }}">link</a>{% endif %}</td>
+      <td>{% if d.source_url is web %}<a href="{{ d.source_url }}">link</a>{% endif %}</td>
       <td>{{ d.quote }}</td>
     </tr>
   {% endfor %}

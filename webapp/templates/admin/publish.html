@@ -31,7 +31,7 @@
     <tr>
       <td>{{ r.program }}</td><td>{{ r.field }}</td><td><span class="status change-{{ r.kind|replace(' ', '-') }}">{{ r.kind }}</span></td>
       <td>{{ r.old }}</td><td><strong>{{ r.new }}</strong></td><td>{{ r.origin }}</td>
-      <td>{% if r.source %}<a href="{{ r.source }}" target="_blank" rel="noopener noreferrer">source</a>{% endif %}</td>
+      <td>{% if r.source is web %}<a href="{{ r.source }}" target="_blank" rel="noopener noreferrer">source</a>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

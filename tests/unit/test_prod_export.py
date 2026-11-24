@@ -116,24 +116,26 @@ def test_write_from_db_writes_bundle(wb, prod, tmp_path):
         write_from_db(path, wb, knowledge_dir=tmp_path / "kb")
 
 
-def test_export_fills_copy_and_places_new_programs(wb, prod, tmp_path):
-    path, _ = prod
+def test_export_rebuilds_rows_from_the_database(wb, prod, tmp_path):
+    path, ids = prod
     before = hashlib.sha256(wb.read_bytes()).hexdigest()
     out = tmp_path / "out.xlsx"
-    assert exporter.export_workbook(path, wb, out) == 4  # purdue 2, added 1, clark 1; gwu's equals the template
+    assert exporter.export_workbook(path, wb, out) == 5  # purdue 2 (not its Website Link fact), gwu, clark, added
     assert hashlib.sha256(wb.read_bytes()).hexdigest() == before
-    ws = openpyxl.load_workbook(out)["MS HRM"]
+    book = openpyxl.load_workbook(out)
+    assert book.sheetnames == ["MS HRM"]
+    ws = book["MS HRM"]
+    assert [c.value for c in ws[1]] == HEAD
     col = {h: i + 1 for i, h in enumerate(HEAD)}
+    # legacy rows in order, then added rows (10001+), then programs with no legacy_key; no caption, no inactive
+    assert [ws.cell(row=r, column=1).value for r in range(2, ws.max_row + 1)] == [
+        "PURDUE UNIVERSITY", "GEORGE WASHINGTON UNIVERSITY", "BOSTON COLLEGE", "CLARK UNIVERSITY"]
     cell = ws.cell(row=2, column=col["Credit Hours"])
     assert cell.value == "36" and cell.hyperlink.target == URL and cell.fill.fill_type is None
     assert cell.comment.text.startswith(f"found · {URL}\n\"The program requires") and len(cell.comment.text) < 400
-    assert ws.cell(row=2, column=col["Website Link"]).value == URL  # ID column not overwritten
+    assert ws.cell(row=2, column=col["Website Link"]).value == URL  # from the program, not the fact
     typed = ws.cell(row=3, column=col["Credit Hours"])
-    assert typed.value == 36 and typed.comment is None  # equal to the template: left as typed
-    # new rows go right under the last real school; the caption row (and its link) moves down below them
-    assert [ws.cell(row=r, column=1).value for r in (4, 5, 6, 7)] == ["BOSTON COLLEGE", "CLARK UNIVERSITY",
-                                                                      CAPTION, None]
-    assert ws["A6"].hyperlink.target == "https://usnews.com"
+    assert typed.value == "36" and typed.comment.text == "entered" and typed.hyperlink is None
     assert ws.cell(row=5, column=col["Program Name"]).value == "MSHRM"
     assert ws.cell(row=5, column=col["Website Link"]).value == "https://clark.edu/hrm"
     gmat = ws.cell(row=5, column=col["Average GMAT"])
@@ -143,18 +145,49 @@ def test_export_fills_copy_and_places_new_programs(wb, prod, tmp_path):
         exporter.export_workbook(path, wb, wb)
 
 
-def test_export_refuses_a_legacy_row_of_another_school(wb, tmp_path):
-    conn = db.connect(tmp_path / "bad.sqlite")
-    db.create_program(conn, sheet="MS HRM", university="Clark  university", legacy_key="MS HRM:2")
+def test_export_leaks_nothing_from_the_template(tmp_path):
+    """A hidden sheet, a staff comment, a typed value under a not-published fact and an inactive program's row stay
+    out of the export; header formatting and column widths are kept."""
+    from openpyxl.comments import Comment
+    from openpyxl.styles import Font
+    template = tmp_path / "template.xlsx"
+    book = openpyxl.Workbook()
+    ws = book.active
+    ws.title = "MS HRM"
+    ws.append(HEAD)
+    ws.append(["PURDUE UNIVERSITY", "Daniels", "HRM", URL, 36, 640])
+    ws.append(["OLD COLLEGE", "", "", "", 30])
+    ws["A1"].font = Font(bold=True)
+    ws["A1"].comment = Comment("header note by Jane Staff", "Jane Staff")
+    ws["F2"].comment = Comment("checked with the director, Jane Staff", "Jane Staff")
+    ws.column_dimensions["A"].width = 41
+    staff = book.create_sheet("Staff")
+    staff.append(["Name", "Email", "Website Link"])
+    staff.append(["Jane Staff", "jane@purdue.edu", ""])
+    staff.sheet_state = "hidden"
+    book.create_sheet("Notes").append(["internal notes"])
+    book.save(template)
+    conn = db.connect(tmp_path / "p.sqlite")
+    purdue = db.create_program(conn, sheet="MS HRM", university="PURDUE UNIVERSITY", program="HRM", legacy_key="MS HRM:2")
+    old = db.create_program(conn, sheet="MS HRM", university="OLD COLLEGE", legacy_key="MS HRM:3")
+    db.create_program(conn, sheet="Staff", university="Jane Staff")
+    db.apply_changes(conn, [
+        {"program_id": purdue, "field": "Average GMAT", "old": None, "new": new(None, status="not-published")},
+        {"program_id": purdue, "field": "Credit Hours", "old": None, "new": new("36")},
+        {"program_id": old, "field": "Credit Hours", "old": None, "new": new("30")}], by="ana")
+    conn.execute("UPDATE programs SET active=0 WHERE id=?", (old,))
     conn.close()
-    out = tmp_path / "bad.xlsx"
-    with pytest.raises(ValueError, match="MS HRM row 2"):
-        exporter.export_workbook(tmp_path / "bad.sqlite", wb, out)
-    assert not out.exists()
-    conn = db.connect(tmp_path / "ok.sqlite")
-    db.create_program(conn, sheet="MS HRM", university="purdue   University", legacy_key="MS HRM:2")
-    conn.close()
-    assert exporter.export_workbook(tmp_path / "ok.sqlite", wb, out) == 0  # case and spacing don't matter
+    out = tmp_path / "out.xlsx"
+    assert exporter.export_workbook(tmp_path / "p.sqlite", template, out) == 1
+    got = openpyxl.load_workbook(out)
+    assert got.sheetnames == ["MS HRM"]
+    ws = got["MS HRM"]
+    values = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
+    assert ws.max_row == 2 and "OLD COLLEGE" not in values and 640 not in values and "640" not in values
+    assert ws["F2"].value is None and ws["F2"].comment is None  # not published: blank
+    assert [c.coordinate for row in ws.iter_rows() for c in row if c.comment] == ["E2"]
+    assert "Jane" not in ws["E2"].comment.text and ws["A1"].comment is None
+    assert ws["A1"].font.bold and ws.column_dimensions["A"].width == 41
 
 
 def test_export_cli(wb, prod, tmp_path, monkeypatch, capsys):
@@ -162,4 +195,4 @@ def test_export_cli(wb, prod, tmp_path, monkeypatch, capsys):
     out = tmp_path / "cli.xlsx"
     monkeypatch.setattr(sys, "argv", ["prod.exporter", str(path), str(wb), str(out)])
     exporter.main()
-    assert "4 cells" in capsys.readouterr().out and out.exists()
+    assert "5 cells" in capsys.readouterr().out and out.exists()

@@ -80,7 +80,7 @@ def test_public_home_request_form_and_api(site):
 
 def test_public_nav_and_knowledge_from_knowledge_dir(site):
     body = site.get("/knowledge").get_data(as_text=True)
-    assert "Competitive analysis" in body and 'href="/request"' in body and 'href="/download.xlsx"' in body
+    assert ">Purdue competitive analysis</h1>" in body and "· Purdue competitive analysis</title>" in body and 'href="/request"' in body and 'href="/download.xlsx"' in body
     for admin in ('href="/"', "/run", "/review", "/health", "/admin"):
         assert admin not in body
     assert "Purdue: 36 credit hours" in site.get("/knowledge/ms-hrm.md").get_data(as_text=True)
@@ -93,17 +93,33 @@ def test_download_streams_the_export_and_writes_nothing_in_the_repo(site, monkey
     repo = lambda: ({p.name for p in ROOT.iterdir()}, {p: p.stat().st_mtime_ns for p in ROOT.glob("*.xlsx")})
     repo_before = repo()
     builds = []
-    real = exporter.export_workbook
-    monkeypatch.setattr(exporter, "export_workbook", lambda *a: builds.append(a) or real(*a))
+    real = exporter.write_snapshot
+    monkeypatch.setattr(exporter, "write_snapshot", lambda *a: builds.append(a) or real(*a))
     r = site.get("/download.xlsx")
     assert r.status_code == 200 and r.mimetype.endswith("spreadsheetml.sheet")
     assert "attachment" in r.headers["Content-Disposition"] and "v1.xlsx" in r.headers["Content-Disposition"]
     ws = openpyxl.load_workbook(io.BytesIO(r.data))["MS HRM"]
     assert ws.cell(2, HEAD.index("Credit Hours") + 1).value == "36"
     assert site.get("/download.xlsx").data == r.data and len(builds) == 1  # the same version: built once
+    assert builds[0][0]["version"] == 1  # the name's version is the exported snapshot's
     assert list((site.tmp / "t").iterdir()) == []  # the temp folder is gone
     assert repo() == repo_before
     assert [p.name for p in site.tmp.rglob("*.xlsx")] == ["template.xlsx"]
+
+
+def test_download_failure_is_remembered(site, monkeypatch):
+    calls = []
+
+    def broken(*a):
+        calls.append(a)
+        raise KeyError("a bad template")
+
+    monkeypatch.setattr(webapp, "_export", {"key": None, "data": b"", "version": None, "failed": {}})
+    monkeypatch.setattr(exporter, "write_snapshot", broken)
+    assert [site.get("/download.xlsx").status_code for _ in range(3)] == [503, 503, 503]
+    assert len(calls) == 1  # not rebuilt for a minute
+    monkeypatch.setattr(webapp.time, "monotonic", lambda: 1e12)
+    assert site.get("/download.xlsx").status_code == 503 and len(calls) == 2
 
 
 def test_download_503_when_not_set_up(site, monkeypatch):
@@ -151,8 +167,9 @@ def test_admin_checks_origin_and_host(admin):
     assert admin.get("/review", headers={"Host": "127.0.0.1:5000"}).status_code == 200
 
 
-def test_admin_api_is_exempt_and_nav_lists_admin_pages(admin):
-    assert admin.post("/request", data={"sheet": "MS HRM", "university": "X"}).status_code == 503  # no PROD_DB
+def test_admin_has_no_api_and_nav_lists_admin_pages(admin):
+    assert admin.get("/request").status_code == 404 and admin.get("/api/export").status_code == 404
+    assert admin.post("/request", data={"university": "X", "csrf_token": "tok"}).status_code == 404
     body = admin.get("/knowledge").get_data(as_text=True)
     for link in ('href="/"', 'href="/review"', 'href="/health"', 'href="/admin/requests"', 'href="/admin/publish"'):
         assert link in body

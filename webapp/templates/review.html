@@ -65,7 +65,7 @@
       <tr>
         <td>{{ r.at[:16]|replace("T", " ") }}</td><td>{{ r.reviewer }}</td><td>{{ r.university }}</td>
         <td>{{ r.sheet }}</td><td>{{ r.field }}</td><td>{{ r.decision }}</td>
-        <td>{{ r.value }}{% if r.source_url %} <a href="{{ r.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
+        <td>{{ r.value }}{% if r.source_url is web %} <a href="{{ r.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
         <td>{{ r.note }}</td>
         <td><form method="post" action="{{ url_for('admin.review_undo') }}">{{ csrf_field() }}
           <input type="hidden" name="id" value="{{ r.id }}">
@@ -90,12 +90,12 @@
     </header>
     <dl>
       {% if i.value %}<dt>{{ "Current value" if group == "stale" else "Candidate" }}</dt><dd><strong>{{ i.value }}</strong></dd>{% endif %}
-      {% if i.quote %}<dt>Quote</dt><dd>“{{ i.quote }}”{% if i.url %} <a href="{{ i.url }}" target="_blank" rel="noopener">source</a>{% endif %}</dd>
-      {% elif i.url %}<dt>{{ "Source" if i.value else "Best page found" }}</dt><dd><a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.url }}</a></dd>{% endif %}
+      {% if i.quote %}<dt>Quote</dt><dd>“{{ i.quote }}”{% if i.url is web %} <a href="{{ i.url }}" target="_blank" rel="noopener">source</a>{% endif %}</dd>
+      {% elif i.url is web %}<dt>{{ "Source" if i.value else "Best page found" }}</dt><dd><a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.url }}</a></dd>{% endif %}
       {% if i.snippet %}<dt>Page now says</dt><dd>“{{ i.snippet }}”</dd>{% endif %}
       <dt>Why it's here</dt><dd>{{ i.why }}</dd>
       {% if i.last_year %}<dt>Last year</dt><dd>{{ i.last_year }}</dd>{% endif %}
-      {% if i.program_url %}<dt>Program page</dt><dd><a href="{{ i.program_url }}" target="_blank" rel="noopener">{{ i.program_url }}</a></dd>{% endif %}
+      {% if i.program_url is web %}<dt>Program page</dt><dd><a href="{{ i.program_url }}" target="_blank" rel="noopener">{{ i.program_url }}</a></dd>{% endif %}
     </dl>
     <form method="post" action="{{ url_for('admin.review_decide') }}" class="review-form">{{ csrf_field() }}
       <input type="hidden" name="id" value="{{ i.id }}">

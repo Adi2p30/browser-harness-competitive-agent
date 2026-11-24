@@ -65,8 +65,10 @@ the page says so instead of failing.
 
 - `/admin/requests`: the requests, newest first, filterable by status. New and claimed ones have **Claim**,
   **Add as program** (the request's sheet, university, program and link go to `add_program` with its
-  `request_id`, which marks it done; then a fresh snapshot is pulled) and **Reject** with an optional note.
-- `/admin/programs/new`: a form for `add_program` (sheet, university, school, program, link), then a pull.
+  `request_id`, which marks it done; then a fresh snapshot is pulled; a request that is already done or
+  rejected is refused with a message, here and by the server) and **Reject** with an optional note.
+- `/admin/programs/new`: a form for `add_program` (sheet, university, school, program, link), then a pull. A
+  successful submit redirects back to the form, so reloading the page doesn't add the program twice.
 - `/admin/publish`: the diff against a fresh export, as a table (program, field, new / changed / not published,
   production's value, yours, origin, source), and the unmapped programs. The confirm form carries the SHA-256 of
   the change list. Confirming exports and compares again; if the hash differs (someone published, or the research

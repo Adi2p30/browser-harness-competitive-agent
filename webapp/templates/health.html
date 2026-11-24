@@ -72,7 +72,7 @@
     <tr class="health-row-{{ r.result }}">
       <td><span class="status health-{{ r.result }}">{{ r.result }}</span></td>
       <td>{{ r.university }}</td><td>{{ r.sheet }}</td><td>{{ r.field }}</td><td>{{ r.value }}</td>
-      <td>{{ r.quote }} <a href="{{ r.url }}" target="_blank" rel="noopener">source</a></td>
+      <td>{{ r.quote }}{% if r.url is web %} <a href="{{ r.url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
       <td>{{ r.snippet }}</td><td>{{ r.detail }}</td>
     </tr>
   {% endfor %}

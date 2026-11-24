@@ -4,7 +4,7 @@ docs/okf/project/components/webapp.md.
 - admin (the default; local, 127.0.0.1 only): start a field_pipeline run and watch it live, the review queue, source
   health, the knowledge pages, and the production pages in prod_pages.py. Every form carries a CSRF token.
 - public (hosted; deploy/serve.py sets it): the knowledge pages, the request form and admin-key API (api.py), and
-  /download.xlsx. No run, review, health or /admin route exists.
+  /download.xlsx. No run, review, health or /admin route exists; the admin app has no /api or /request.
 
     uv run --with flask --with openpyxl --with beautifulsoup4 --with requests --with pypdf \\
         --with pyyaml python webapp/app.py
@@ -15,10 +15,10 @@ import io
 import logging
 import os
 import secrets
-import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -326,9 +326,9 @@ def review_export():
         abort(400, "no workbook")
     run = _run_choice(xlsx)[0]
     name = "review_queue.xlsx" if run == "all" else f"review_queue_{run}.xlsx"
-    dest = xlsx.with_name(f"{xlsx.stem}_field_pipeline") / name
-    review.export_xlsx(_queue(xlsx, _scope(run))["items"], dest)
-    return send_file(dest, as_attachment=True, download_name=name)
+    data = review.export_xlsx(_queue(xlsx, _scope(run))["items"], io.BytesIO())
+    data.seek(0)
+    return send_file(data, as_attachment=True, download_name=name)
 
 
 @admin.post("/review/import")
@@ -367,8 +367,10 @@ def knowledge_index():
         return render_template("knowledge.html", built=False)
     frontmatter, body = read_concept(folder / "index.md")
     title = frontmatter.get("title", "Knowledge")
-    return render_template("knowledge.html", built=True, title=title,
-                           body_html=mdlite.render(mdlite.drop_title(body, title)))
+    body = mdlite.drop_title(body, title)
+    if current_app.config["MODE"] == "public":
+        title = "Purdue competitive analysis"
+    return render_template("knowledge.html", built=True, title=title, body_html=mdlite.render(body))
 
 
 @knowledge.get("/knowledge/<path:rel>", endpoint="page")
@@ -395,35 +397,54 @@ def home():
     return redirect(url_for("knowledge.index"))
 
 
-_export: dict = {"key": None, "data": b""}
+RETRY_FAILED_EXPORT = 60  # seconds a failed build is remembered, so failures can't tie up every thread
+_export: dict = {"key": None, "data": b"", "version": None, "failed": {}}
 _export_lock = threading.Lock()
+
+
+def _build_export(db_path: Path, template: Path, key: tuple) -> None:
+    """Build the workbook from one snapshot, whose version names the download. A failure is remembered for a
+    minute per key."""
+    from prod import db, exporter
+    if time.monotonic() - _export["failed"].get(key, -RETRY_FAILED_EXPORT) < RETRY_FAILED_EXPORT:
+        abort(503, "The workbook can't be built right now.")
+    try:
+        conn = db.connect(db_path, readonly=True)
+        try:
+            snap = db.snapshot(conn)
+        finally:
+            conn.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "export.xlsx"
+            exporter.write_snapshot(snap, template, out)
+            _export.update(key=key, data=out.read_bytes(), version=snap["version"], failed={})
+    except Exception:
+        log.warning("workbook export failed", exc_info=True)
+        _export["failed"] = {key: time.monotonic()}
+        abort(503, "The workbook can't be built right now.")
 
 
 @site.get("/download.xlsx")
 def download():
-    """prod.exporter's filled workbook for PROD_DB and PROD_TEMPLATE, built in a temp folder and kept in memory
-    until the database version or the template changes."""
+    """prod.exporter's workbook for PROD_DB and PROD_TEMPLATE, built in a temp folder and kept in memory until the
+    database version or the template changes."""
+    from prod import db
     db_path, template = api._db_path(), api._template()
     if db_path is None or template is None:
         abort(503, "The workbook download isn't set up on this server.")
-    from prod import db, exporter
     try:
         conn = db.connect(db_path, readonly=True)
         try:
-            version = db.version(conn)
+            key = (str(db_path), db.version(conn), str(template), template.stat().st_mtime_ns)
         finally:
             conn.close()
-        key = (str(db_path), version, str(template), template.stat().st_mtime_ns)
-        with _export_lock:  # one build at a time; later requests reuse it
-            if _export["key"] != key:
-                with tempfile.TemporaryDirectory() as tmp:
-                    out = Path(tmp) / "export.xlsx"
-                    exporter.export_workbook(db_path, template, out)
-                    _export.update(key=key, data=out.read_bytes())
-            data = _export["data"]
-    except (sqlite3.Error, OSError, ValueError):
-        log.warning("workbook export failed", exc_info=True)
+    except Exception:
+        log.warning("workbook export: can't read %s", db_path, exc_info=True)
         abort(503, "The workbook can't be built right now.")
+    with _export_lock:  # one build at a time; later requests reuse it
+        if _export["key"] != key:
+            _build_export(db_path, template, key)
+        data, version = _export["data"], _export["version"]
     return send_file(io.BytesIO(data), as_attachment=True,
                      download_name=f"Purdue competitive analysis v{version}.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -455,8 +476,8 @@ def _origin(url: str) -> tuple:
 
 def _check_csrf():
     """A state-changing request must come from this app's own page: Origin (or Referer) names this host, and the
-    form's csrf_token (or an X-CSRF-Token header) equals the session's. The bearer-key API is exempt."""
-    if request.method in ("GET", "HEAD", "OPTIONS") or request.blueprint == "api":
+    form's csrf_token (or an X-CSRF-Token header) equals the session's."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
         return
     sent_from = request.headers.get("Origin") or request.headers.get("Referer")
     if sent_from and _origin(sent_from) != _origin(request.host_url):
@@ -466,15 +487,20 @@ def _check_csrf():
         abort(403, "missing or expired form token: reload the page and try again")
 
 
+def _web(url) -> bool:
+    return isinstance(url, str) and url.strip().lower().startswith(("http://", "https://"))
+
+
 def create_app(mode: str) -> Flask:
     """The app for `mode` ("admin" or "public"); only that mode's routes are registered."""
     if mode not in MODES:
         raise ValueError(f"APP_MODE must be one of {MODES}, not {mode!r}")
     app = Flask(__name__)
     app.config.update(MODE=mode, KNOWLEDGE_DIR=knowledge_dir())
+    app.jinja_env.tests["web"] = _web  # {% if url is web %}: only http(s) links become an href
     app.register_blueprint(knowledge)
-    app.register_blueprint(api.bp)
     if mode == "public":
+        app.register_blueprint(api.bp)
         app.register_blueprint(site)
     else:
         import prod_pages

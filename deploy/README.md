@@ -134,7 +134,8 @@ curl -s http://127.0.0.1:8000/api/export           # 401 {"error": ...} means it
 Then copy `deploy/nginx.conf.example` (or `deploy/apache.conf.example`) into the proxy's
 config, fill in `@SERVER_NAME@` and the certificate paths, test it (`nginx -t` or
 `apachectl configtest`) and reload. Both forward only `/api/`, `/request`, `/knowledge`,
-`/download.xlsx` (the workbook, built from the database) and `/static/` to `127.0.0.1:8000`, send `/` to `/knowledge` and refuse everything else. They set
+`/download.xlsx` (the workbook, rebuilt from the database alone) and `/static/` to
+`127.0.0.1:8000`, send `/` to `/knowledge` and refuse everything else. They set
 `X-Forwarded-For` (hence `PROD_TRUSTED_PROXIES=1`), cap request bodies at 64 KB, and allow
 32 MB and 300 s for `/api/publish`. Keep port 8000 closed to the outside.
 

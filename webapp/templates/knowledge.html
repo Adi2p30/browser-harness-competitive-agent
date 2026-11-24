@@ -15,7 +15,7 @@ uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf --with
 {% else %}
 <h1>{{ title }}</h1>
 {% if mode == "public" %}
-<p class="intro">Purdue competitive analysis: how peer programs compare on cost, admissions, outcomes and rankings.
+<p class="intro">How peer programs compare with Purdue's on cost, admissions, outcomes and rankings.
   <a href="{{ url_for('site.download') }}">Download the workbook (.xlsx)</a> or
   <a href="{{ url_for('api.request_form') }}">ask for a school to be added</a>.</p>
 {% endif %}

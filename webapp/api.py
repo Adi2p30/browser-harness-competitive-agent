@@ -231,8 +231,12 @@ def program_create():
     if request_id is not None and not _is_id(request_id):
         return _error("request_id must be an integer", 400)
     with db._tx(_conn()):  # the program and its request's "done" land together or not at all
-        if request_id is not None and _request_row(request_id) is None:
-            return _error(f"unknown request {request_id}", 404)
+        if request_id is not None:
+            row = _request_row(request_id)
+            if row is None:
+                return _error(f"unknown request {request_id}", 404)
+            if row["status"] not in ("new", "claimed"):  # already done (a double submit) or rejected
+                return _error(f"request {request_id} is {row['status']}", 409)
         program_id = db.create_program(_conn(), **fields, added_by=g.admin)
         if request_id is not None:
             db.set_request_status(_conn(), request_id, "done", program_id=program_id)

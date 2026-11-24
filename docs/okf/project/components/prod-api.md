@@ -13,8 +13,8 @@ status: draft
 [prod.db](prod-db.md) over JSON. Each request opens its own connection.
 
 The hosted app runs in public mode (`APP_MODE=public`, set by `deploy/serve.py`), which registers no
-`/run`, `/health`, `/review` or `/admin` route; `serve.py` refuses to start if one exists. The admin app
-registers this blueprint too, for local testing.
+`/run`, `/health`, `/review` or `/admin` route; `serve.py` refuses to start if one exists. Only public
+mode registers this blueprint; the local admin app has no `/api` or `/request`.
 
 Config is read from the environment on every request:
 
@@ -48,7 +48,8 @@ SQLite gets 400, or 404 in a path.
   `POST /api/requests/<id>/status` `{"status", "admin_note"?, "program_id"?}`. An unknown
   `program_id` gets 400.
 - `POST /api/programs` `{"sheet", "university", "school"?, "program"?, "link"?, "request_id"?}`
-  returns 201 `{"id"}`. With `request_id`, that request becomes done in the same transaction.
+  returns 201 `{"id"}`. With `request_id`, that request becomes done in the same transaction; a request
+  that is already done or rejected gets 409 and no program is created (so a double submit adds one).
 
 `/request` is public. Anyone can ask for a school to be added. Sheet names come from the
 template workbook when it can be read. A body over 16 KB gets 413. A filled hidden `website`

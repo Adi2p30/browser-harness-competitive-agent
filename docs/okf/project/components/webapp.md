@@ -17,14 +17,16 @@ mode registers only its own blueprints, so a route of the other mode doesn't exi
 
 - **public** (hosted, set by `deploy/serve.py`): `/` redirects to `/knowledge`; the knowledge pages;
   `/request` and `/api/*` ([prod API](prod-api.md)); `/download.xlsx`, the production database (`PROD_DB`)
-  exported into the template workbook (`PROD_TEMPLATE`) by `prod.exporter`. The export is built in a temp folder and
-  kept in memory until the database version or the template changes, so nothing is written in the repo. 503 when
-  either is missing. No `/run`, `/health`, `/review` or `/admin` route is registered.
-- **admin** (the default): everything below, plus `/request` and `/api/*`. It answers only to a `Host` of
+  rebuilt by `prod.exporter` in the template's layout (`PROD_TEMPLATE`; headers only, no template data). It is
+  built in a temp folder from one snapshot, whose version names the file, and kept in memory until the database
+  version or the template changes, so nothing is written in the repo. 503 when either is missing or the build
+  fails; a failed build is not retried for 60 s. No `/run`, `/health`, `/review` or `/admin` route is registered.
+- **admin** (the default): everything below; no `/request` or `/api/*`. It answers only to a `Host` of
   `127.0.0.1`, `localhost` or `::1` (against DNS rebinding). Every POST outside `/api` and `/request` needs the
   session's CSRF token (a hidden `csrf_token` field or an `X-CSRF-Token` header; the session cookie is signed with
   a key made at startup, so restarting means reloading open pages), and an `Origin` or `Referer` naming this host
-  when the browser sends one. Otherwise 403.
+  when the browser sends one. Otherwise 403. Run it as one process (as `app.run` does): the CSRF signing key
+  and the runs live in that process, so several workers would reject each other's tokens.
 
 The nav lists only the mode's pages. The knowledge pages read `KNOWLEDGE_DIR` (the folder the API rebuilds after a
 publish), default `<repo>/docs/okf/knowledge`; the app refuses to start when it doesn't end in `docs/okf/knowledge`.
@@ -48,7 +50,7 @@ Admin pages:
   `all`): every unfilled or stale cell of that run, grouped by what a
   person needs to do, with one-click decisions (accept the rejected candidate, Not ranked, No, leave blank) or
   a typed value and source. Decisions append to `<workbook>_field_pipeline/reviews.csv`; a Reviewed tab undoes
-  them; the queue also round-trips through an Excel export/import. A cell's id is `<program id>|<field>`
+  them; the queue also round-trips through an Excel export (built in memory) and import. A cell's id is `<program id>|<field>`
   (`<sheet>:<row>|<field>` before a snapshot is pulled). The reviewer's name is a cookie.
 - `/health` — the latest source health check (`field_pipeline.health`): counts per result, a table of
   changed / missing / dead / unreadable values with the stored quote and what the page says now. Buttons

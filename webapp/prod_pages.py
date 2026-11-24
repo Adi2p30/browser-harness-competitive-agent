@@ -34,10 +34,10 @@ def _pull(client: Client) -> str:
     try:
         snap = client.export()
     except ClientError as e:
-        return f"Couldn't pull a fresh snapshot ({e}); press Pull."
+        return f"Couldn't pull a fresh snapshot ({e}); press Pull a fresh snapshot to try again."
     save_snapshot(xlsx, snap)
     n = len(snap["programs"])
-    return f"Pulled version {snap['version']} ({n} program{'s' if n != 1 else ''})."
+    return f"Pulled a fresh snapshot: version {snap['version']}, {n} program{'s' if n != 1 else ''}."
 
 
 def _research_hint(program_id: int) -> str:
@@ -61,9 +61,13 @@ def requests_inbox():
     status = request.args.get("status", "")
     page = {"status": status, "msg": request.args.get("msg", ""), "error": request.args.get("error", "")}
     try:
-        rows = _client().requests(status or None)
+        c = _client()
     except ClientError as e:
-        return render_template("admin/requests.html", rows=None, unavailable=str(e), **page)
+        return render_template("admin/requests.html", rows=None, unconfigured=str(e), **page)
+    try:
+        rows = c.requests(status or None)
+    except ClientError as e:
+        return render_template("admin/requests.html", rows=None, unreachable=str(e), **page)
     return render_template("admin/requests.html", rows=rows[::-1], **page)
 
 
@@ -91,6 +95,8 @@ def request_add(request_id):
         req = next((r for r in c.requests() if r["id"] == request_id), None)
         if req is None:
             raise ClientError("no such request on the server")
+        if req["status"] not in ("new", "claimed"):  # a double submit, or a rejected request
+            raise ClientError(f"it is already {req['status']}, so no program was added")
         pid = c.add_program(sheet=req["sheet"], university=req["university"], program=req.get("program") or None,
                             link=req.get("link") or None, request_id=request_id)
         return f"Added program {pid} for request #{request_id}; the request is done. {_pull(c)}{_research_hint(pid)}"
@@ -113,7 +119,7 @@ def program_new():
     sheets = sorted(read_rows(str(xlsx))[0]) if xlsx else []
     form = {k: request.form.get(k, "").strip() for k in PROGRAM_FIELDS}
     if request.method == "GET":
-        return render_template("admin/program.html", sheets=sheets, form=form)
+        return render_template("admin/program.html", sheets=sheets, form=form, msg=request.args.get("msg", ""))
     if not form["sheet"] or not form["university"]:
         return render_template("admin/program.html", sheets=sheets, form=form,
                                error="Program sheet and university are required."), 400
@@ -122,9 +128,8 @@ def program_new():
         pid = c.add_program(**{k: v or None for k, v in form.items()})
     except ClientError as e:
         return render_template("admin/program.html", sheets=sheets, form=form, error=str(e)), 502
-    return render_template("admin/program.html", sheets=sheets, form={},
-                           msg=f"Added program {pid}: {form['sheet']} · {form['university']}. {_pull(c)}"
-                               f"{_research_hint(pid)}")
+    return redirect(url_for("prod.program_new", msg=f"Added program {pid}: {form['sheet']} · {form['university']}. "
+                                                    f"{_pull(c)}{_research_hint(pid)}"))
 
 
 # --- publish ---
@@ -204,7 +209,7 @@ def publish_confirm():
         snap, changes, unmapped = _plan(c, xlsx)
     except ClientError as e:
         return render_template("admin/publish.html", unavailable=str(e)), 502
-    if not hmac.compare_digest(digest(changes), request.form.get("digest", "")):
+    if not hmac.compare_digest(digest(changes).encode(), request.form.get("digest", "").encode()):
         return _diff_page(snap, changes, unmapped, 409,
                           stale="The changes are no longer the ones you confirmed: someone published, or the local "
                                 "research changed. Nothing was published. Check them again below.")

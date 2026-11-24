@@ -8,10 +8,13 @@
 {% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
 {% if error %}<p class="warn">{{ error }}</p>{% endif %}
 
-{% if rows is none %}
-<p class="warn"><strong>Can't reach the production server.</strong> {{ unavailable }}<br>
+{% if unconfigured %}
+<p class="warn"><strong>The production server isn't configured.</strong> {{ unconfigured }}<br>
   Set <code>PROD_URL</code> and <code>PROD_ADMIN_KEY</code> in the repo-root <code>.env</code> (or the environment),
   then reload this page.</p>
+{% elif unreachable %}
+<p class="warn"><strong>Can't reach the production server.</strong> {{ unreachable }}<br>
+  Check that <code>PROD_URL</code> is right and the server is up, then reload this page.</p>
 {% else %}
 <div class="review-bar">
   <form method="get" action="{{ url_for('prod.requests_inbox') }}" class="review-filter">
@@ -35,7 +38,7 @@
     <span class="status req-{{ r.status }}">{{ r.status }}{% if r.claimed_by %} · {{ r.claimed_by }}{% endif %}</span>
   </header>
   <dl>
-    {% if r.link %}<dt>Link</dt><dd><a href="{{ r.link }}" target="_blank" rel="noopener noreferrer">{{ r.link }}</a></dd>{% endif %}
+    {% if r.link %}<dt>Link</dt><dd>{% if r.link is web %}<a href="{{ r.link }}" target="_blank" rel="noopener noreferrer">{{ r.link }}</a>{% else %}{{ r.link }}{% endif %}</dd>{% endif %}
     {% if r.note %}<dt>Their note</dt><dd>{{ r.note }}</dd>{% endif %}
     {% if r.admin_note %}<dt>Admin note</dt><dd>{{ r.admin_note }}</dd>{% endif %}
     {% if r.program_id %}<dt>Program id</dt><dd>{{ r.program_id }}</dd>{% endif %}

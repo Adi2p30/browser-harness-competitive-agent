@@ -83,8 +83,10 @@ REQUESTS = [{"id": 1, "sheet": "MS HRM", "university": "CLARK UNIVERSITY", "prog
 
 
 def test_inbox_lists_requests(admin):
-    admin.session.reply("GET", "/api/requests", Response(200, {"requests": REQUESTS}))
+    sneaky = {**REQUESTS[1], "id": 3, "status": "rejected", "link": "javascript:alert(1)"}
+    admin.session.reply("GET", "/api/requests", Response(200, {"requests": REQUESTS + [sneaky]}))
     body = admin.get("/admin/requests").get_data(as_text=True)
+    assert 'href="https://clarku.edu/hrm"' in body and 'href="javascript' not in body  # only http(s) links
     assert "#1 CLARK UNIVERSITY" in body and "a peer" in body and "claimed · bo" in body
     assert body.count(">Claim</button>") == 1 and body.count(">Add as program</button>") == 2
     assert body.index("#2 BOSTON COLLEGE") < body.index("#1 CLARK UNIVERSITY")  # newest first
@@ -92,12 +94,13 @@ def test_inbox_lists_requests(admin):
 
 def test_inbox_unconfigured_or_unreachable(admin, monkeypatch):
     monkeypatch.delenv("PROD_URL")
-    r = admin.get("/admin/requests")
-    assert r.status_code == 200 and "PROD_URL missing" in r.get_data(as_text=True)
+    body = admin.get("/admin/requests").get_data(as_text=True)
+    assert "isn't configured" in body and "PROD_URL missing" in body and "Can't reach" not in body
     monkeypatch.setenv("PROD_URL", "https://prod.test")
     admin.session.reply("GET", "/api/requests", requests.ConnectionError("connection refused"))
     body = admin.get("/admin/requests").get_data(as_text=True)
     assert "Can't reach the production server" in body and "connection refused" in body
+    assert "isn't configured" not in body
     assert "k1" not in body
 
 
@@ -127,10 +130,24 @@ def test_add_as_program_then_pull(admin, tmp_path):
     assert json.loads(client.snapshot_path(admin.state["xlsx"]).read_text())["version"] == 5
 
 
+def test_add_as_program_refuses_a_done_or_rejected_request(admin):
+    done = [{**REQUESTS[0], "status": "done", "program_id": 42}, {**REQUESTS[1], "status": "rejected"}]
+    admin.session.reply("GET", "/api/requests", Response(200, {"requests": done}), Response(200, {"requests": done}))
+    for rid, status in ((1, "done"), (2, "rejected")):  # e.g. the button pressed twice
+        r = post(admin, f"/admin/requests/{rid}/add")
+        assert "error=" in r.headers["Location"] and f"already+{status}" in r.headers["Location"]
+    assert not admin.session.posts("/api/programs")
+    admin.session.reply("GET", "/api/requests", Response(200, {"requests": REQUESTS}))
+    admin.session.reply("POST", "/api/programs", Response(409, {"error": "request 1 is done"}))  # the server's guard
+    assert "request+1+is+done" in post(admin, "/admin/requests/1/add").headers["Location"]
+
+
 def test_add_program_form(admin):
     assert post(admin, "/admin/programs/new", sheet="MS HRM").status_code == 400  # no university
     admin.session.reply("POST", "/api/programs", Response(201, {"id": 43}))
-    body = post(admin, "/admin/programs/new", sheet="MS HRM", university=" CLARK UNIVERSITY ").get_data(as_text=True)
+    r = post(admin, "/admin/programs/new", sheet="MS HRM", university=" CLARK UNIVERSITY ")
+    assert r.status_code == 302  # post/redirect/get: a reload doesn't add it again
+    body = admin.get(r.headers["Location"]).get_data(as_text=True)
     assert "Added program 43" in body and "--program 43" in body and "no snapshot was saved" in body
     assert admin.session.posts("/api/programs") == [{"sheet": "MS HRM", "university": "CLARK UNIVERSITY"}]
 

@@ -1,7 +1,7 @@
 ---
 type: Component
 title: prod.exporter
-description: Builds the knowledge bundle and a filled copy of the template workbook from the production database.
+description: Builds the knowledge bundle and a workbook laid out like the template from the production database.
 resource: agent-workspace/prod/exporter.py
 generated: {by: claude-code/opus-5.5, at: '2026-11-24T00:00:00Z'}
 status: draft
@@ -20,14 +20,13 @@ workbook, since the database stores no column order.
   the dict was built from. `write_bundle` always writes to
   `<root>/docs/okf/knowledge`, so a `knowledge_dir` must end in that path.
 - `python -m prod.exporter <prod.sqlite> <template.xlsx> <out.xlsx>`, run from
-  `agent-workspace/`, writes a filled copy (`export_workbook` returns the number of cells
-  written). A program with `legacy_key` `sheet:row` below 10001 fills that row through
-  `field_pipeline.workbook.write`. If that row's university isn't the program's, the export
-  stops with a ValueError naming the sheet and row. Every other active program goes in a new
-  row, written after `write()` returns. The rows are inserted right under the sheet's last
-  real school, so caption and note rows (the rows `build()` skips) move down below them.
-  Added schools (rows 10001 and up) come first, then programs with no `legacy_key`. Each
-  cell's comment is `status · source_url` plus the quote, cut to 300 characters, and the cell
-  links to `source_url`. There is no fill. A fact equal to what the template cell already
-  holds isn't written, so typed numbers keep their type and format. Facts for identifying
-  columns are skipped, and the template is never written.
+  `agent-workspace/`, writes the database as a workbook (`export_workbook` returns the number of
+  fact cells written; the public site serves it as `/download.xlsx`). It is a clean rebuild, not
+  an overlay of the template: only the visible program sheets' header rows are kept (header
+  values and formatting, column widths, frozen panes). No template data row, comment, hidden
+  sheet or other sheet is copied, so values and notes typed into the template never reach it.
+  Each sheet gets one row per active program, by legacy row (`legacy_key` `sheet:row`), then
+  programs with no `legacy_key`, then id. The identifying columns come from the program record;
+  each fact with a value fills its column with a comment `status · source_url` plus the quote
+  (cut to 300 characters) and a link to `source_url`. A fact with no value (not published) leaves
+  its cell blank. The template is never written.
