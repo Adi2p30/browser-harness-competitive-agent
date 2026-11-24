@@ -56,10 +56,14 @@ def _fact(pid: int, name: str, kind: str, f: dict) -> dict:
 
 
 def build_from_db(conn, workbook: Path) -> dict:
-    """{"built", "sheets", "programs", "facts"} from the database's current snapshot. Programs on a sheet the
-    template doesn't have, and facts for a column it doesn't have, are left out."""
+    """{"built", "sheets", "programs", "facts"} from the database's current snapshot."""
+    return build_from_snapshot(db.snapshot(conn), workbook)
+
+
+def build_from_snapshot(snap: dict, workbook: Path) -> dict:
+    """build_from_db for a db.snapshot() already read (one transaction, so its "version" labels it exactly).
+    Programs on a sheet the template doesn't have, and facts for a column it doesn't have, are left out."""
     cols, _ = read_rows(str(workbook))
-    snap = db.snapshot(conn)
     by_program: dict[int, dict[str, dict]] = {}
     for f in snap["facts"]:
         by_program.setdefault(f["program_id"], {})[f["field"]] = f
@@ -91,9 +95,9 @@ def write_from_db(db_path: Path, workbook: Path, repo_root: Path = REPO_ROOT, kn
         repo_root = knowledge_dir.parents[2]
     conn = db.connect(db_path, readonly=True)
     try:
-        kb = build_from_db(conn, workbook)
-        v = db.version(conn)
+        snap = db.snapshot(conn)
     finally:
         conn.close()
+    kb, v = build_from_snapshot(snap, workbook), snap["version"]
     by = Counter(f["s"] for f in kb["facts"])
     return write_bundle(kb, Path(repo_root), f"prod v{v}: {len(kb['programs'])} programs, {len(kb['facts'])} facts {dict(by)}")

@@ -19,11 +19,12 @@ from prod import db, exporter  # noqa: E402
 HEAD = ["University Name", "School/College Name", "Program Name", "Website Link", "Credit Hours", "Average GMAT",
         "Female %", "Ranking (QS)"]
 URL = "https://purdue.edu/hrm"
+CAPTION = "Colleges not ranked on US News"
 
 
 @pytest.fixture
 def wb(tmp_path):
-    """A one-sheet template: Purdue row 2, GWU row 3 with Credit Hours typed."""
+    """A one-sheet template: Purdue row 2, GWU row 3 with Credit Hours typed, a linked caption row 4."""
     path = tmp_path / "EDIT Test 2026-2027.xlsx"
     book = openpyxl.Workbook()
     ws = book.active
@@ -31,6 +32,8 @@ def wb(tmp_path):
     ws.append(HEAD)
     ws.append(["PURDUE UNIVERSITY", "Daniels", "HRM", URL])
     ws.append(["GEORGE WASHINGTON UNIVERSITY", "GWSB", "MHRM", "https://gwu.edu/mhrm", 36])
+    ws.append([CAPTION])
+    ws["A4"].hyperlink = "https://usnews.com"
     book.save(path)
     return path
 
@@ -117,7 +120,7 @@ def test_export_fills_copy_and_places_new_programs(wb, prod, tmp_path):
     path, _ = prod
     before = hashlib.sha256(wb.read_bytes()).hexdigest()
     out = tmp_path / "out.xlsx"
-    assert exporter.export_workbook(path, wb, out) == 5  # purdue 2, gwu 1, added 1, clark 1
+    assert exporter.export_workbook(path, wb, out) == 4  # purdue 2, added 1, clark 1; gwu's equals the template
     assert hashlib.sha256(wb.read_bytes()).hexdigest() == before
     ws = openpyxl.load_workbook(out)["MS HRM"]
     col = {h: i + 1 for i, h in enumerate(HEAD)}
@@ -125,8 +128,12 @@ def test_export_fills_copy_and_places_new_programs(wb, prod, tmp_path):
     assert cell.value == "36" and cell.hyperlink.target == URL and cell.fill.fill_type is None
     assert cell.comment.text.startswith(f"found · {URL}\n\"The program requires") and len(cell.comment.text) < 400
     assert ws.cell(row=2, column=col["Website Link"]).value == URL  # ID column not overwritten
-    assert ws.cell(row=3, column=col["Credit Hours"]).comment.text == "entered"
-    assert [ws.cell(row=r, column=1).value for r in (4, 5, 6)] == ["BOSTON COLLEGE", "CLARK UNIVERSITY", None]
+    typed = ws.cell(row=3, column=col["Credit Hours"])
+    assert typed.value == 36 and typed.comment is None  # equal to the template: left as typed
+    # new rows go right under the last real school; the caption row (and its link) moves down below them
+    assert [ws.cell(row=r, column=1).value for r in (4, 5, 6, 7)] == ["BOSTON COLLEGE", "CLARK UNIVERSITY",
+                                                                      CAPTION, None]
+    assert ws["A6"].hyperlink.target == "https://usnews.com"
     assert ws.cell(row=5, column=col["Program Name"]).value == "MSHRM"
     assert ws.cell(row=5, column=col["Website Link"]).value == "https://clark.edu/hrm"
     gmat = ws.cell(row=5, column=col["Average GMAT"])
@@ -136,9 +143,23 @@ def test_export_fills_copy_and_places_new_programs(wb, prod, tmp_path):
         exporter.export_workbook(path, wb, wb)
 
 
+def test_export_refuses_a_legacy_row_of_another_school(wb, tmp_path):
+    conn = db.connect(tmp_path / "bad.sqlite")
+    db.create_program(conn, sheet="MS HRM", university="Clark  university", legacy_key="MS HRM:2")
+    conn.close()
+    out = tmp_path / "bad.xlsx"
+    with pytest.raises(ValueError, match="MS HRM row 2"):
+        exporter.export_workbook(tmp_path / "bad.sqlite", wb, out)
+    assert not out.exists()
+    conn = db.connect(tmp_path / "ok.sqlite")
+    db.create_program(conn, sheet="MS HRM", university="purdue   University", legacy_key="MS HRM:2")
+    conn.close()
+    assert exporter.export_workbook(tmp_path / "ok.sqlite", wb, out) == 0  # case and spacing don't matter
+
+
 def test_export_cli(wb, prod, tmp_path, monkeypatch, capsys):
     path, _ = prod
     out = tmp_path / "cli.xlsx"
     monkeypatch.setattr(sys, "argv", ["prod.exporter", str(path), str(wb), str(out)])
     exporter.main()
-    assert "5 cells" in capsys.readouterr().out and out.exists()
+    assert "4 cells" in capsys.readouterr().out and out.exists()
