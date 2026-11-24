@@ -125,14 +125,40 @@ def test_requirements_pinned_with_hashes():
             assert "--hash=sha256:" in block, block.splitlines()[0]
 
 
+@pytest.mark.skipif(not shutil.which("uv"), reason="needs uv")
+def test_require_hashes_rejects_a_bad_hash(tmp_path):
+    """The README's `uv pip sync --require-hashes`, on one small package: the real hashes install, a corrupted one
+    is refused. Skipped when pypi can't be reached."""
+    text = (DEPLOY / "requirements.txt").read_text()
+    block = next(b for b in re.split(r"\n(?=\S)", text) if b.startswith("blinker=="))
+    good, bad = tmp_path / "good.txt", tmp_path / "bad.txt"
+    good.write_text(block + "\n")
+    bad.write_text(re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "0" * 64, block) + "\n")
+    env = {**serve.os.environ, "UV_CACHE_DIR": str(tmp_path / "cache"), "UV_NO_CONFIG": "1"}
+
+    def sync(name: str, reqs: Path) -> subprocess.CompletedProcess:
+        venv = tmp_path / name
+        subprocess.run(["uv", "venv", "-q", "--python", sys.executable, str(venv)], env=env, check=True, timeout=60)
+        return subprocess.run(["uv", "pip", "sync", "--require-hashes", "--python", str(venv / "bin" / "python"),
+                               str(reqs)], env=env, capture_output=True, text=True, timeout=120)
+
+    ok = sync("good", good)
+    if ok.returncode:
+        pytest.skip(f"offline or pypi unreachable: {ok.stderr.strip()[-200:]}")
+    res = sync("bad", bad)
+    assert res.returncode != 0 and "Hash mismatch" in res.stderr
+
+
 def test_service_template():
     text = (DEPLOY / "prod-public.service").read_text()
     for needle in ("User=@USER@", "WorkingDirectory=@REPO@", "EnvironmentFile=@ENV_FILE@", "Restart=on-failure",
                    "StartLimitIntervalSec=300", "StartLimitBurst=5", "UMask=0027",
                    "NoNewPrivileges=true", "ProtectSystem=strict", "ProtectHome=true",
                    "ReadWritePaths=@DB_DIR@ @BACKUP_DIR@ @REPO@/docs/okf/knowledge",
-                   "--with-requirements @REPO@/deploy/requirements.txt python deploy/serve.py"):
+                   "ExecStart=@VENV@/bin/python @REPO@/deploy/serve.py"):
         assert needle in text
+    assert "uv run" not in text and "UV_CACHE_DIR" not in text and "CacheDirectory" not in text
+    assert "@VENV@" not in text.split("ReadWritePaths=")[1].splitlines()[0]  # the venv stays read-only
     lines = text.splitlines()
     explained = {m for line in lines if line.startswith("#") for m in PLACEHOLDER.findall(line)}
     used = {m for line in lines if not line.startswith("#") for m in PLACEHOLDER.findall(line)}

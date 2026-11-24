@@ -4,7 +4,7 @@
 #   @ENV_FILE@    the env file (PROD_DB, PROD_BACKUP_DIR, ...)
 #   @DB_DIR@      the folder holding PROD_DB (SQLite writes its -wal and -shm files next to it)
 #   @BACKUP_DIR@  PROD_BACKUP_DIR
-#   @UV@          absolute path of a system-wide uv, such as /usr/local/bin/uv
+#   @VENV@        the venv from deploy/README.md step 3, owned by the deploy user (read-only to the service)
 [Unit]
 Description=Purdue competitive analysis site (waitress, one process)
 Wants=network-online.target
@@ -17,13 +17,12 @@ Type=simple
 User=@USER@
 WorkingDirectory=@REPO@
 EnvironmentFile=@ENV_FILE@
-Environment=UV_CACHE_DIR=%C/prod-public PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-ExecStart=@UV@ run --no-project --with-requirements @REPO@/deploy/requirements.txt python deploy/serve.py
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=@VENV@/bin/python @REPO@/deploy/serve.py
 Restart=on-failure
 RestartSec=5
 
 UMask=0027
-CacheDirectory=prod-public
 ReadWritePaths=@DB_DIR@ @BACKUP_DIR@ @REPO@/docs/okf/knowledge
 NoNewPrivileges=true
 ProtectSystem=strict
