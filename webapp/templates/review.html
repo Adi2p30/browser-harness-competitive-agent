@@ -9,7 +9,7 @@
   with each. Your decisions go into the knowledge base ahead of any pipeline value, and each cell leaves the queue
   once you decide it.</p>
 
-<form method="get" action="{{ url_for('review_index') }}" class="run-picker">
+<form method="get" action="{{ url_for('admin.review_index') }}" class="run-picker">
   <label>Run
     <select name="run" onchange="this.form.submit()">
       {% for r in runs %}<option value="{{ r.id }}" {% if r.id == run %}selected{% endif %}>{{ r.label }}</option>{% endfor %}
@@ -26,7 +26,7 @@
 {% if error %}<p class="warn">{{ error }}</p>{% endif %}
 
 <div class="review-bar">
-  <form method="get" action="{{ url_for('review_index') }}" class="review-filter">
+  <form method="get" action="{{ url_for('admin.review_index') }}" class="review-filter">
     <input type="hidden" name="run" value="{{ run }}">
     <input type="hidden" name="group" value="{{ group }}">
     <select name="sheet" onchange="this.form.submit()" aria-label="Program sheet">
@@ -36,7 +36,7 @@
     <input type="text" name="q" value="{{ q }}" placeholder="School contains…" aria-label="School filter">
     <button type="submit" class="small">Filter</button>
   </form>
-  <form method="post" action="{{ url_for('review_name') }}" class="review-filter">
+  <form method="post" action="{{ url_for('admin.review_name') }}" class="review-filter">{{ csrf_field() }}
     <input type="hidden" name="run" value="{{ run }}">
     {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
     {% if sheet %}<input type="hidden" name="sheet" value="{{ sheet }}">{% endif %}
@@ -47,10 +47,10 @@
 
 <nav class="review-tabs">
   {% for g, label in groups.items() %}
-  <a href="{{ url_for('review_index', run=run, group=g, sheet=sheet or None, q=q or None) }}"
+  <a href="{{ url_for('admin.review_index', run=run, group=g, sheet=sheet or None, q=q or None) }}"
      class="{{ 'active' if g == group }}{{ ' empty' if not counts[g] }}">{{ label }} <span>{{ counts[g] }}</span></a>
   {% endfor %}
-  <a href="{{ url_for('review_index', run=run, group='reviewed', sheet=sheet or None, q=q or None) }}"
+  <a href="{{ url_for('admin.review_index', run=run, group='reviewed', sheet=sheet or None, q=q or None) }}"
      class="{{ 'active' if group == 'reviewed' }}">Reviewed <span>{{ reviewed|length }}</span></a>
 </nav>
 
@@ -65,9 +65,9 @@
       <tr>
         <td>{{ r.at[:16]|replace("T", " ") }}</td><td>{{ r.reviewer }}</td><td>{{ r.university }}</td>
         <td>{{ r.sheet }}</td><td>{{ r.field }}</td><td>{{ r.decision }}</td>
-        <td>{{ r.value }}{% if r.source_url %} <a href="{{ r.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
+        <td>{{ r.value }}{% if r.source_url is web %} <a href="{{ r.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
         <td>{{ r.note }}</td>
-        <td><form method="post" action="{{ url_for('review_undo') }}">
+        <td><form method="post" action="{{ url_for('admin.review_undo') }}">{{ csrf_field() }}
           <input type="hidden" name="id" value="{{ r.id }}">
           <input type="hidden" name="run" value="{{ run }}">
           {% if sheet %}<input type="hidden" name="sheet" value="{{ sheet }}">{% endif %}
@@ -90,14 +90,14 @@
     </header>
     <dl>
       {% if i.value %}<dt>{{ "Current value" if group == "stale" else "Candidate" }}</dt><dd><strong>{{ i.value }}</strong></dd>{% endif %}
-      {% if i.quote %}<dt>Quote</dt><dd>“{{ i.quote }}”{% if i.url %} <a href="{{ i.url }}" target="_blank" rel="noopener">source</a>{% endif %}</dd>
-      {% elif i.url %}<dt>{{ "Source" if i.value else "Best page found" }}</dt><dd><a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.url }}</a></dd>{% endif %}
+      {% if i.quote %}<dt>Quote</dt><dd>“{{ i.quote }}”{% if i.url is web %} <a href="{{ i.url }}" target="_blank" rel="noopener">source</a>{% endif %}</dd>
+      {% elif i.url is web %}<dt>{{ "Source" if i.value else "Best page found" }}</dt><dd><a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.url }}</a></dd>{% endif %}
       {% if i.snippet %}<dt>Page now says</dt><dd>“{{ i.snippet }}”</dd>{% endif %}
       <dt>Why it's here</dt><dd>{{ i.why }}</dd>
       {% if i.last_year %}<dt>Last year</dt><dd>{{ i.last_year }}</dd>{% endif %}
-      {% if i.program_url %}<dt>Program page</dt><dd><a href="{{ i.program_url }}" target="_blank" rel="noopener">{{ i.program_url }}</a></dd>{% endif %}
+      {% if i.program_url is web %}<dt>Program page</dt><dd><a href="{{ i.program_url }}" target="_blank" rel="noopener">{{ i.program_url }}</a></dd>{% endif %}
     </dl>
-    <form method="post" action="{{ url_for('review_decide') }}" class="review-form">
+    <form method="post" action="{{ url_for('admin.review_decide') }}" class="review-form">{{ csrf_field() }}
       <input type="hidden" name="id" value="{{ i.id }}">
       <input type="hidden" name="run" value="{{ run }}">
       <input type="hidden" name="group" value="{{ group }}">
@@ -128,8 +128,8 @@
 <p>Download the queue, fill in the yellow <em>Decision</em>, <em>Value</em>, <em>Source URL</em> and <em>Note</em>
   columns, and upload it back here. Rows left without a decision are skipped.</p>
 <div class="review-bar">
-  <a class="button-link" href="{{ url_for('review_export', run=run) }}">Download {{ "this run's" if run != "all" else "the whole" }} queue (.xlsx)</a>
-  <form method="post" action="{{ url_for('review_import') }}" enctype="multipart/form-data" class="review-filter">
+  <a class="button-link" href="{{ url_for('admin.review_export', run=run) }}">Download {{ "this run's" if run != "all" else "the whole" }} queue (.xlsx)</a>
+  <form method="post" action="{{ url_for('admin.review_import') }}" enctype="multipart/form-data" class="review-filter">{{ csrf_field() }}
     <input type="hidden" name="run" value="{{ run }}">
     <input type="file" name="file" accept=".xlsx" aria-label="Filled review queue">
     <button type="submit" class="small">Import decisions</button>

@@ -6,7 +6,7 @@
 <p>
   Status: <span id="run-status" class="status {{ run.status }}">{{ run.status }}</span>
   {% if run.status == "running" %}
-  <form method="post" action="{{ url_for('run_stop', run_id=run.id) }}" class="inline">
+  <form method="post" action="{{ url_for('admin.run_stop', run_id=run.id) }}" class="inline">{{ csrf_field() }}
     <button type="submit" class="stop">Stop</button>
   </form>
   {% endif %}
@@ -24,7 +24,7 @@
     <tr class="status-{{ d.status }}">
       <td>{{ d.sheet }}</td><td>{{ d.university }}</td><td>{{ d.field }}</td>
       <td>{{ d.status }}</td><td>{{ d.value }}</td>
-      <td>{% if d.source_url %}<a href="{{ d.source_url }}">link</a>{% endif %}</td>
+      <td>{% if d.source_url is web %}<a href="{{ d.source_url }}">link</a>{% endif %}</td>
       <td>{{ d.quote }}</td>
     </tr>
   {% endfor %}

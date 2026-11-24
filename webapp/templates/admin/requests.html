@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Requests{% endblock %}
+{% block content %}
+<h1>School requests</h1>
+<p>Schools people asked for on the public site. Claim one to say you're on it, add it as a program (production gets
+  it, and so does your next pull), or reject it with a note.</p>
+
+{% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
+{% if error %}<p class="warn">{{ error }}</p>{% endif %}
+
+{% if unconfigured %}
+<p class="warn"><strong>The production server isn't configured.</strong> {{ unconfigured }}<br>
+  Set <code>PROD_URL</code> and <code>PROD_ADMIN_KEY</code> in the repo-root <code>.env</code> (or the environment),
+  then reload this page.</p>
+{% elif unreachable %}
+<p class="warn"><strong>Can't reach the production server.</strong> {{ unreachable }}<br>
+  Check that <code>PROD_URL</code> is right and the server is up, then reload this page.</p>
+{% else %}
+<div class="review-bar">
+  <form method="get" action="{{ url_for('prod.requests_inbox') }}" class="review-filter">
+    <select name="status" onchange="this.form.submit()" aria-label="Status">
+      <option value="">All requests</option>
+      {% for s in ("new", "claimed", "done", "rejected") %}<option value="{{ s }}" {% if s == status %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+    </select>
+    <noscript><button type="submit" class="small">Show</button></noscript>
+  </form>
+  <a class="button-link" href="{{ url_for('prod.program_new') }}">Add a program</a>
+  <form method="post" action="{{ url_for('prod.pull') }}" class="review-filter">{{ csrf_field() }}
+    <button type="submit" class="small ghost">Pull a fresh snapshot</button>
+  </form>
+</div>
+
+{% for r in rows %}
+<article class="review-item" id="request-{{ r.id }}">
+  <header>
+    <strong>#{{ r.id }} {{ r.university }}</strong>
+    <span class="who">{{ r.sheet }}{% if r.program %} · {{ r.program }}{% endif %}{% if r.submitted_at %} · sent {{ r.submitted_at[:10] }}{% endif %}</span>
+    <span class="status req-{{ r.status }}">{{ r.status }}{% if r.claimed_by %} · {{ r.claimed_by }}{% endif %}</span>
+  </header>
+  <dl>
+    {% if r.link %}<dt>Link</dt><dd>{% if r.link is web %}<a href="{{ r.link }}" target="_blank" rel="noopener noreferrer">{{ r.link }}</a>{% else %}{{ r.link }}{% endif %}</dd>{% endif %}
+    {% if r.note %}<dt>Their note</dt><dd>{{ r.note }}</dd>{% endif %}
+    {% if r.admin_note %}<dt>Admin note</dt><dd>{{ r.admin_note }}</dd>{% endif %}
+    {% if r.program_id %}<dt>Program id</dt><dd>{{ r.program_id }}</dd>{% endif %}
+  </dl>
+  {% if r.status in ("new", "claimed") %}
+  <div class="request-actions">
+    {% if r.status == "new" %}
+    <form method="post" action="{{ url_for('prod.request_claim', request_id=r.id) }}">{{ csrf_field() }}
+      <input type="hidden" name="status" value="{{ status }}">
+      <button type="submit" class="small">Claim</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('prod.request_add', request_id=r.id) }}">{{ csrf_field() }}
+      <input type="hidden" name="status" value="{{ status }}">
+      <button type="submit" class="small">Add as program</button>
+    </form>
+    <form method="post" action="{{ url_for('prod.request_reject', request_id=r.id) }}" class="review-filter">{{ csrf_field() }}
+      <input type="hidden" name="status" value="{{ status }}">
+      <input type="text" name="note" placeholder="Why (optional)" aria-label="Reason">
+      <button type="submit" class="small ghost">Reject</button>
+    </form>
+  </div>
+  {% endif %}
+</article>
+{% else %}
+<p class="notice">No {{ status }} requests.</p>
+{% endfor %}
+{% endif %}
+{% endblock %}

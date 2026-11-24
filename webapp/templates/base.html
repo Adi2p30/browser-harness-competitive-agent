@@ -3,17 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Competitive Analysis{% endblock %} · Purdue</title>
+<title>{% block title %}Competitive analysis{% endblock %} · Purdue{{ " competitive analysis" if mode == "public" }}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <header class="topbar">
-  <a class="brand" href="{{ url_for('index') }}">PURDUE <span>Competitive Analysis</span></a>
+  <a class="brand" href="{{ url_for(nav[0][0]) if nav else '/' }}">PURDUE <span>Competitive analysis</span></a>
   <nav>
-    <a href="{{ url_for('index') }}">Run</a>
-    <a href="{{ url_for('review_index') }}">Review</a>
-    <a href="{{ url_for('health_index') }}">Source health</a>
-    <a href="{{ url_for('knowledge_index') }}">Knowledge</a>
+    {% for endpoint, label in nav %}<a href="{{ url_for(endpoint) }}">{{ label }}</a>
+    {% endfor %}
   </nav>
 </header>
 <main>

@@ -56,3 +56,23 @@ and `reject <id> [--note]`. `add-program --sheet S --university U [--school --pr
 `python -m field_pipeline <workbook> --program <id>`.
 
 Exit codes: 0 ok, 1 error, 3 conflicts. The diff code is in `agent-workspace/prod/diff.py`.
+
+## In the admin app
+
+The local [webapp](webapp.md) (`./run-webapp.sh`) has the same actions as pages, in `webapp/prod_pages.py`. They use
+this client with the same `PROD_URL` and `PROD_ADMIN_KEY`; when those are missing or the server can't be reached,
+the page says so instead of failing.
+
+- `/admin/requests`: the requests, newest first, filterable by status. New and claimed ones have **Claim**,
+  **Add as program** (the request's sheet, university, program and link go to `add_program` with its
+  `request_id`, which marks it done; then a fresh snapshot is pulled; a request that is already done or
+  rejected is refused with a message, here and by the server) and **Reject** with an optional note.
+- `/admin/programs/new`: a form for `add_program` (sheet, university, school, program, link), then a pull. A
+  successful submit redirects back to the form, so reloading the page doesn't add the program twice.
+- `/admin/publish`: the diff against a fresh export, as a table (program, field, new / changed / not published,
+  production's value, yours, origin, source), and the unmapped programs. The confirm form carries the SHA-256 of
+  the change list. Confirming exports and compares again; if the hash differs (someone published, or the research
+  changed), nothing is posted and the new diff is shown (409). Otherwise it publishes with the note, shows the
+  applied changes and each conflict (theirs, who changed it and when, yours), and pulls a fresh snapshot.
+- **Pull** (on both pages, `POST /admin/pull`) saves a fresh `prod-snapshot.json`. Loading the publish page
+  doesn't save one.

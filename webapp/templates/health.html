@@ -10,7 +10,7 @@
 {% if not xlsx %}
 <p class="warn">No <code>EDIT Competitive Analysis Research*.xlsx</code> workbook found in the repo root.</p>
 {% else %}
-<form method="post" action="{{ url_for('health_start') }}" class="run-form">
+<form method="post" action="{{ url_for('admin.health_start') }}" class="run-form">{{ csrf_field() }}
   <fieldset>
     <legend>Run a source check now</legend>
     <label>Browser
@@ -35,7 +35,7 @@
 {% if checks %}
 <h2>Check {{ chosen.name }}</h2>
 {% if checks|length > 1 %}
-<form method="get" action="{{ url_for('health_index') }}" class="inline">
+<form method="get" action="{{ url_for('admin.health_index') }}" class="inline">
   <select name="check" onchange="this.form.submit()">
     {% for d in checks %}<option value="{{ d.name }}" {% if d == chosen %}selected{% endif %}>{{ d.name }}</option>{% endfor %}
   </select>
@@ -46,7 +46,7 @@
 </p>
 
 {% if recheck %}
-<form method="post" action="{{ url_for('health_recheck') }}" class="run-form">
+<form method="post" action="{{ url_for('admin.health_recheck') }}" class="run-form">{{ csrf_field() }}
   <input type="hidden" name="check" value="{{ chosen.name }}">
   <p>{{ recheck }} cell(s) are changed, missing or dead. Researching them again runs the pipeline on only those cells
     (RCAC calls, about a minute per school).</p>
@@ -72,7 +72,7 @@
     <tr class="health-row-{{ r.result }}">
       <td><span class="status health-{{ r.result }}">{{ r.result }}</span></td>
       <td>{{ r.university }}</td><td>{{ r.sheet }}</td><td>{{ r.field }}</td><td>{{ r.value }}</td>
-      <td>{{ r.quote }} <a href="{{ r.url }}" target="_blank" rel="noopener">source</a></td>
+      <td>{{ r.quote }}{% if r.url is web %} <a href="{{ r.url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
       <td>{{ r.snippet }}</td><td>{{ r.detail }}</td>
     </tr>
   {% endfor %}

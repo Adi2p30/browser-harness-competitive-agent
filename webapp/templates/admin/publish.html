@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Publish{% endblock %}
+{% block content %}
+<h1>Publish to production</h1>
+{% if unavailable %}
+<p class="warn"><strong>Can't prepare a publish.</strong> {{ unavailable }}<br>
+  Publishing needs <code>PROD_URL</code> and <code>PROD_ADMIN_KEY</code> in the repo-root <code>.env</code> (or the
+  environment) and the workbook in the repo root.</p>
+{% else %}
+<p>Your research (pipeline values and review decisions) compared with production version {{ snap.version }}, fetched
+  just now. Only these changes are sent. If production's value moves before you confirm, that change comes back as
+  a conflict.</p>
+{% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
+{% if stale %}<p class="warn"><strong>{{ stale }}</strong></p>{% endif %}
+{% if error %}<p class="warn">{{ error }}</p>{% endif %}
+
+<div class="review-bar">
+  <form method="post" action="{{ url_for('prod.pull') }}" class="review-filter">{{ csrf_field() }}
+    <input type="hidden" name="back" value="publish">
+    <button type="submit" class="small ghost">Pull a fresh snapshot</button>
+  </form>
+</div>
+
+{% if rows %}
+<h2>{{ count }} change{{ "s" if count != 1 }}</h2>
+<div class="table-scroll">
+<table class="decisions">
+  <thead><tr><th>Program</th><th>Field</th><th>Change</th><th>Production now</th><th>Yours</th><th>From</th><th>Source</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.program }}</td><td>{{ r.field }}</td><td><span class="status change-{{ r.kind|replace(' ', '-') }}">{{ r.kind }}</span></td>
+      <td>{{ r.old }}</td><td><strong>{{ r.new }}</strong></td><td>{{ r.origin }}</td>
+      <td>{% if r.source is web %}<a href="{{ r.source }}" target="_blank" rel="noopener noreferrer">source</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<form method="post" action="{{ url_for('prod.publish_confirm') }}" class="run-form">{{ csrf_field() }}
+  <input type="hidden" name="digest" value="{{ digest }}">
+  <label>Note <input type="text" name="note" placeholder="e.g. fall run, MS HRM reviewed"></label>
+  <button type="submit" class="gold">Publish {{ count }} change{{ "s" if count != 1 }}</button>
+</form>
+{% else %}
+<p class="notice">Nothing to publish: production already has every value your research would send.</p>
+{% endif %}
+
+{% if unmapped %}
+<h2>Not in production ({{ unmapped|length }})</h2>
+<p class="hint">Local programs with no production match. Their values aren't sent. Add them on
+  <a href="{{ url_for('prod.program_new') }}">Add a program</a>, then pull.</p>
+<ul class="run-list">
+  {% for p in unmapped %}<li>{{ p.sheet }} · {{ p.university }}{% if p.row %} (row {{ p.row }}){% endif %}: {{ p.reason }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endif %}
+{% endblock %}

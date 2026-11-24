@@ -269,3 +269,11 @@ button.ghost:hover { background: var(--line); color: var(--ink); }
   border: 1px solid var(--line); border-radius: 4px; padding: 0.4rem 0.55rem; max-width: 100%; }
 .run-picker label { display: flex; align-items: center; gap: 0.4rem; min-width: 0; max-width: 100%; }
 .run-picker select { margin-left: 0; min-width: 0; flex: 1 1 auto; width: 100%; max-width: 42rem; }
+
+/* production pages (templates/admin/) and the public intro */
+.request-actions { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
+.status.req-new, .status.change-new { background: var(--rush); color: var(--black); }
+.status.req-claimed, .status.change-changed { background: var(--black); color: var(--gold); }
+.status.req-done { background: var(--cool-gray); color: white; }
+.status.req-rejected, .status.change-not-published { background: var(--steam); color: var(--black); }
+.intro { max-width: 60rem; color: var(--steel); }

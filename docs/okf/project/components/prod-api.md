@@ -12,16 +12,17 @@ status: draft
 `webapp/api.py` is a Flask blueprint that `app.py` registers. It serves
 [prod.db](prod-db.md) over JSON. Each request opens its own connection.
 
-The hosted app must run in public mode (Step 8). Until then, `app.py` also serves `/run`,
-`/health` and `/review`, which have no login, so do not expose it as is.
+The hosted app runs in public mode (`APP_MODE=public`, set by `deploy/serve.py`), which registers no
+`/run`, `/health`, `/review` or `/admin` route; `serve.py` refuses to start if one exists. Only public
+mode registers this blueprint; the local admin app has no `/api` or `/request`.
 
 Config is read from the environment on every request:
 
 - `PROD_DB`: the database path. Without it, `/api/*` and `/request` answer 503 and the rest of
   the app still works.
 - `PROD_BACKUP_DIR`: where publishes back up first. The default is `<PROD_DB dir>/backups`.
-- `KNOWLEDGE_DIR`: the knowledge bundle to rebuild. It must be the folder the site's
-  `/knowledge` pages read, `<repo>/docs/okf/knowledge`, which is the default.
+- `KNOWLEDGE_DIR`: the knowledge bundle to rebuild. The site's `/knowledge` pages read the same
+  variable, so they serve what was rebuilt. The default is `<repo>/docs/okf/knowledge`.
   `write_from_db` refuses a path that doesn't end in `docs/okf/knowledge`.
 - `PROD_TEMPLATE`: the template workbook. The default is the repo root's
   `EDIT Competitive Analysis Research*.xlsx`, found the way `app.py` finds it.
@@ -47,7 +48,8 @@ SQLite gets 400, or 404 in a path.
   `POST /api/requests/<id>/status` `{"status", "admin_note"?, "program_id"?}`. An unknown
   `program_id` gets 400.
 - `POST /api/programs` `{"sheet", "university", "school"?, "program"?, "link"?, "request_id"?}`
-  returns 201 `{"id"}`. With `request_id`, that request becomes done in the same transaction.
+  returns 201 `{"id"}`. With `request_id`, that request becomes done in the same transaction; a request
+  that is already done or rejected gets 409 and no program is created (so a double submit adds one).
 
 `/request` is public. Anyone can ask for a school to be added. Sheet names come from the
 template workbook when it can be read. A body over 16 KB gets 413. A filled hidden `website`

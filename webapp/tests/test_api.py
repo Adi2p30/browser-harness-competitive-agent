@@ -34,7 +34,7 @@ def env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(env):
-    with webapp.app.test_client() as c:
+    with webapp.create_app("public").test_client() as c:  # the API exists in public mode only
         yield c
 
 
@@ -191,6 +191,14 @@ def test_create_program_from_request_marks_it_done(env, client):
     assert client.post("/api/programs", headers=auth(env), json={"sheet": "MS HRM", "university": 7}).status_code == 400
     assert client.post("/api/programs", headers=auth(env),
                        json={"sheet": "MS HRM", "university": "X", "request_id": 99}).status_code == 404
+    again = client.post("/api/programs", headers=auth(env),  # a double submit: no second program
+                        json={"sheet": "MS HRM", "university": "CLARK UNIVERSITY", "request_id": rid})
+    assert again.status_code == 409 and "is done" in again.get_json()["error"]
+    rejected = db.add_request(env.conn, sheet="MS HRM", university="YALE")
+    db.set_request_status(env.conn, rejected, "rejected")
+    assert client.post("/api/programs", headers=auth(env),
+                       json={"sheet": "MS HRM", "university": "YALE", "request_id": rejected}).status_code == 409
+    assert env.conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 2
 
 
 def form(**kw):

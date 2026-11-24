@@ -41,6 +41,9 @@ def client(monkeypatch):
     monkeypatch.setattr(webapp, "start_run", fake_start_run)
     webapp._runs.clear()
     with webapp.app.test_client() as c:
+        with c.session_transaction() as s:  # admin forms need the session's CSRF token
+            s["csrf"] = "t"
+        c.environ_base["HTTP_X_CSRF_TOKEN"] = "t"
         yield c, calls
 
 

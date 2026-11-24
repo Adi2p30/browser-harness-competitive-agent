@@ -293,7 +293,8 @@ EXPORT_COLUMNS = [("Group", 22), ("Sheet", 18), ("Row", 6), ("Program ID", 10), 
 INPUT_FROM = "Decision"
 
 
-def export_xlsx(items: list[dict], path: Path) -> Path:
+def export_xlsx(items: list[dict], path):
+    """Write the queue workbook to path (a file path or a binary file object) and return path."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -339,7 +340,8 @@ def export_xlsx(items: list[dict], path: Path) -> Path:
     ]:
         how.append([line])
     how.column_dimensions["A"].width = 100
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(path, (str, Path)):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
 

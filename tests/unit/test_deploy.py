@@ -58,7 +58,7 @@ def test_serve_config_is_valid_for_waitress():
 
 def test_check_public_refuses_admin_routes():
     flask = pytest.importorskip("flask")
-    for rule in ("/run", "/run/<run_id>", "/health", "/review/export"):
+    for rule in ("/run", "/run/<run_id>", "/health", "/review/export", "/admin/publish"):
         app = flask.Flask("t")
         app.add_url_rule("/knowledge", "k", lambda: "")
         app.add_url_rule(rule, "admin", lambda: "")
@@ -71,18 +71,16 @@ def test_check_public_refuses_admin_routes():
 
 
 def test_load_app_sets_public_mode_and_checks_it(monkeypatch):
-    """Refuses today (the app ignores APP_MODE); once public mode lands it returns an app without admin routes."""
+    """serve.load_app imports webapp/app.py in public mode: it starts, with no debug and no admin route."""
     pytest.importorskip("flask")
     monkeypatch.setenv("APP_MODE", "")
     monkeypatch.setattr(sys, "path", list(sys.path))
-    try:
-        app = serve.load_app()
-    except SystemExit as e:
-        assert "APP_MODE=public" in str(e)
-    else:
-        assert not app.debug
-        assert not [r for r in app.url_map.iter_rules() if r.rule.startswith(serve.ADMIN_ROUTES)]
-    assert serve.os.environ["APP_MODE"] == "public"
+    monkeypatch.setitem(sys.modules, "app", None)  # import afresh (not webapp/tests' admin app); undone after
+    monkeypatch.delitem(sys.modules, "app")
+    app = serve.load_app()
+    assert serve.os.environ["APP_MODE"] == "public" and app.config["MODE"] == "public"
+    assert not app.debug
+    assert not [r for r in app.url_map.iter_rules() if r.rule.startswith(serve.ADMIN_ROUTES)]
 
 
 @pytest.mark.skipif(not shutil.which("bash") or not shutil.which("python3"), reason="needs bash and python3")
@@ -167,9 +165,10 @@ def test_service_template():
 
 @pytest.mark.parametrize("name, needles", [
     ("nginx.conf.example", ("client_max_body_size 64k;", "https://@SERVER_NAME@$request_uri", "return 404;",
-                            "location /api/", "location = /request", "location /knowledge/", "location /static/")),
+                            "location /api/", "location = /request", "location /knowledge/", "location /static/",
+                            "location = /download.xlsx")),
     ("apache.conf.example", ("LimitRequestBody 65536", "ProxyRequests Off", "Require all denied",
-                             "api/|request$|knowledge(/|$)|static/")),
+                             "api/|request$|knowledge(/|$)|download\\.xlsx$|static/")),
 ])
 def test_proxy_examples(name, needles):
     text = (DEPLOY / name).read_text()

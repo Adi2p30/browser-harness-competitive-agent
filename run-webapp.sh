@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the Purdue Competitive Analysis web app (webapp/app.py).
+# Starts the Purdue Competitive Analysis admin app (webapp/app.py) on 127.0.0.1:5000.
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
