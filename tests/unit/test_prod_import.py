@@ -184,3 +184,19 @@ def test_origin():
         "review", "pipeline", "pipeline", "workbook", "prior-year"]
     with pytest.raises(ValueError):
         importer.origin("not-found")
+
+
+def test_not_published_review_replaces_the_cell(wb):
+    """Written exactly as prod.diff publishes it, so a fresh import has nothing to publish."""
+    review.append_reviews(wb, [{
+        "sheet": "MS HRM", "row": 2, "university": "PURDUE UNIVERSITY", "program": "HRM", "field": "Credit Hours",
+        "decision": "not-published", "value": "", "source_url": URL, "quote": "", "note": "", "reviewer": "Bo",
+        "at": "2026-11-21T10:00:00Z"}])
+    summary, snap = imported(wb)
+    purdue = next(p["id"] for p in snap["programs"] if p["legacy_key"] == "MS HRM:2")
+    f = next(f for f in snap["facts"] if (f["program_id"], f["field"]) == (purdue, "Credit Hours"))
+    expected = {"value": None, "status": "not-published", "cycle": "2026-2027", "source_url": URL, "quote": None,
+                "origin": "review", "run": None, "reviewed_by": "Bo"}
+    assert {k: f[k] for k in db.NEW_FIELDS} == expected
+    assert importer.not_published(review.load_reviews(wb)[("MS HRM", 2, "Credit Hours")]) == expected
+    assert summary["origins"] == {"review": 2, "workbook": 1, "prior-year": 2} and summary["facts"] == 5
