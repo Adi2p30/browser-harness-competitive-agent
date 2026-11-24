@@ -22,7 +22,7 @@ from prod import db  # noqa: E402
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("PROD_DB", str(tmp_path / "prod.sqlite"))
     monkeypatch.setenv("PROD_BACKUP_DIR", str(tmp_path / "backups"))
-    monkeypatch.setenv("KNOWLEDGE_DIR", str(tmp_path / "knowledge"))
+    monkeypatch.setenv("KNOWLEDGE_DIR", str(tmp_path / "docs/okf/knowledge"))
     monkeypatch.setenv("PROD_TEMPLATE", str(tmp_path / "missing.xlsx"))  # never the real workbook
     api.reset_rate_limit()
     conn = db.connect(tmp_path / "prod.sqlite")
@@ -90,18 +90,34 @@ def test_publish_400_on_bad_input_writes_nothing(env, client, body):
     assert db.version(env.conn) == 0
 
 
-def test_publish_succeeds_when_rebuild_unavailable(env, client, no_rebuild):
+def test_publish_succeeds_when_rebuild_unavailable(env, client, no_rebuild, monkeypatch):
+    (env.tmp / "template.xlsx").write_bytes(b"")
+    monkeypatch.setenv("PROD_TEMPLATE", str(env.tmp / "template.xlsx"))  # so the import itself is reached
     out = client.post("/api/publish", headers=auth(env), json={"changes": [change(None, "36")]}).get_json()
     assert out["rebuilt"] is False and out["version"] == 1
 
 
-def test_publish_rebuilds_knowledge(env, client, monkeypatch):
+@pytest.fixture
+def fake_rebuild(monkeypatch):
     calls = []
     module = types.ModuleType("knowledge_base.from_db")
-    module.write_from_db = lambda conn, template, out: calls.append((db.version(conn), template, out))
+    module.write_from_db = lambda db_path, workbook, **kw: calls.append((db_path, workbook, kw))
     monkeypatch.setitem(sys.modules, "knowledge_base.from_db", module)
+    return calls
+
+
+def test_publish_rebuilds_knowledge(env, client, monkeypatch, fake_rebuild):
+    template = env.tmp / "template.xlsx"
+    template.write_bytes(b"")
+    monkeypatch.setenv("PROD_TEMPLATE", str(template))
     out = client.post("/api/publish", headers=auth(env), json={"changes": [change(None, "36")]}).get_json()
-    assert out["rebuilt"] is True and calls == [(1, None, env.tmp / "knowledge")]
+    assert out["rebuilt"] is True
+    assert fake_rebuild == [(env.tmp / "prod.sqlite", template, {"knowledge_dir": env.tmp / "docs/okf/knowledge"})]
+
+
+def test_publish_skips_rebuild_without_template(env, client, fake_rebuild):
+    out = client.post("/api/publish", headers=auth(env), json={"changes": [change(None, "36")]}).get_json()
+    assert out["rebuilt"] is False and out["version"] == 1 and fake_rebuild == []
 
 
 def test_requests_claim_conflict_status_and_404(env, client):

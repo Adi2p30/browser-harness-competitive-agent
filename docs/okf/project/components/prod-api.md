@@ -17,7 +17,8 @@ Config is read from the environment on every request:
 - `PROD_DB`: the database path. Without it, `/api/*` and `/request` answer 503 and the rest of
   the app still works.
 - `PROD_BACKUP_DIR`: where publishes back up first. The default is `<PROD_DB dir>/backups`.
-- `KNOWLEDGE_DIR`: the knowledge bundle to rebuild. The default is `docs/okf/knowledge`.
+- `KNOWLEDGE_DIR`: the knowledge bundle to rebuild. It must end in `docs/okf/knowledge`. The
+  default is the repo's `docs/okf/knowledge`.
 - `PROD_TEMPLATE`: the template workbook. The default is the repo root's
   `EDIT Competitive Analysis Research*.xlsx`, found the way `app.py` finds it.
 
@@ -26,9 +27,10 @@ or revoked key gets 401. Every error under `/api` is `{"error": "..."}`.
 
 - `GET /api/export`: the snapshot.
 - `POST /api/publish` `{"changes", "note"}`: runs `apply_changes` as the key's admin. Bad input
-  gets 400 and writes nothing. When anything applied, it rebuilds the knowledge bundle with
-  `knowledge_base.from_db.write_from_db(conn, template, knowledge_dir)`. The response says
-  `"rebuilt": true` or `false`. A failed rebuild is logged and never fails the publish.
+  gets 400 and writes nothing. When anything applied, it rebuilds the knowledge bundle after the
+  commit with `knowledge_base.from_db.write_from_db(PROD_DB, template, knowledge_dir=...)`. The
+  response says `"rebuilt": true` or `false`. Without a template workbook the rebuild is skipped.
+  A skipped or failed rebuild is logged and never fails the publish.
 - `GET /api/requests?status=`, `POST /api/requests/<id>/claim` (409 names who holds it),
   `POST /api/requests/<id>/status` `{"status", "admin_note"?, "program_id"?}`.
 - `POST /api/programs` `{"sheet", "university", "school"?, "program"?, "link"?, "request_id"?}`

@@ -2,7 +2,7 @@
 form at /request. See docs/okf/project/components/prod-api.md.
 
 Config is read from the environment on every request: PROD_DB (required; without it these routes answer 503),
-PROD_BACKUP_DIR (default <PROD_DB dir>/backups), KNOWLEDGE_DIR (default docs/okf/knowledge) and PROD_TEMPLATE
+PROD_BACKUP_DIR (default <PROD_DB dir>/backups), KNOWLEDGE_DIR (default docs/okf/knowledge; must end in docs/okf/knowledge) and PROD_TEMPLATE
 (the template workbook; default the repo root's EDIT Competitive Analysis Research*.xlsx, as app.py finds it).
 """
 import logging
@@ -40,8 +40,9 @@ def _backup_dir() -> Path:
     return Path(os.environ.get("PROD_BACKUP_DIR") or _db_path().parent / "backups")
 
 
-def _knowledge_dir() -> Path:
-    return Path(os.environ.get("KNOWLEDGE_DIR") or ROOT / "docs" / "okf" / "knowledge")
+def _knowledge_dir() -> Path | None:
+    """KNOWLEDGE_DIR (it must end in docs/okf/knowledge), or None for write_from_db's default."""
+    return Path(os.environ["KNOWLEDGE_DIR"]) if os.environ.get("KNOWLEDGE_DIR") else None
 
 
 def _template() -> Path | None:
@@ -144,10 +145,14 @@ def publish():
 def _rebuild() -> bool:
     """Rewrite the knowledge bundle from the database. A failure (Step 3's module missing included) is logged and
     never fails the publish: the facts are already committed."""
+    template = _template()
+    if template is None:
+        log.warning("knowledge bundle not rebuilt after publish: no template workbook")
+        return False
     try:
         from knowledge_base.from_db import write_from_db
-        with _rebuild_lock:
-            write_from_db(_conn(), _template(), _knowledge_dir())
+        with _rebuild_lock:  # apply_changes has committed; write_from_db opens the file read-only itself
+            write_from_db(_db_path(), template, knowledge_dir=_knowledge_dir())
         return True
     except Exception:
         log.warning("knowledge bundle rebuild after publish failed", exc_info=True)
