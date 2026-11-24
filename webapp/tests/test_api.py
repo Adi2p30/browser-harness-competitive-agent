@@ -81,6 +81,8 @@ def test_publish_applies_then_reports_stale_old_as_conflict(env, client, no_rebu
 
 
 @pytest.mark.parametrize("body", [{}, {"changes": "x"}, {"changes": [change(None, "36")], "note": 5},
+                                  {"changes": [change(None, "36")], "note": None},
+                                  {"changes": [{**change(None, "36"), "program_id": 2**64}]},
                                   {"changes": [change(None, "36"), change(None, "37")]},
                                   {"changes": [{**change(None, "36"), "program_id": 99}]}])
 def test_publish_400_on_bad_input_writes_nothing(env, client, body):
@@ -88,6 +90,43 @@ def test_publish_400_on_bad_input_writes_nothing(env, client, body):
     assert r.status_code == 400 and r.get_json()["error"]
     assert env.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0] == 0
     assert db.version(env.conn) == 0
+
+
+def test_publish_nothing_takes_no_backup(env, client):
+    r = client.post("/api/publish", headers=auth(env), json={"changes": []})
+    assert r.status_code == 200 and r.get_json() == {"version": 0, "applied": [], "conflicts": []}
+    assert not (env.tmp / "backups").exists()
+
+
+def test_oversized_ids_are_400_or_404(env, client):
+    big = 2**64
+    assert client.post(f"/api/requests/{big}/claim", headers=auth(env)).status_code == 404
+    assert client.post(f"/api/requests/{big}/status", headers=auth(env), json={"status": "done"}).status_code == 404
+    rid = db.add_request(env.conn, sheet="MS HRM", university="CLARK UNIVERSITY")
+    assert client.post(f"/api/requests/{rid}/status", headers=auth(env),
+                       json={"status": "done", "program_id": big}).status_code == 400
+    assert client.post("/api/programs", headers=auth(env),
+                       json={"sheet": "MS HRM", "university": "X", "request_id": big}).status_code == 400
+
+
+def test_status_rejects_unknown_program(env, client):
+    rid = db.add_request(env.conn, sheet="MS HRM", university="CLARK UNIVERSITY")
+    r = client.post(f"/api/requests/{rid}/status", headers=auth(env), json={"status": "done", "program_id": 99})
+    assert r.status_code == 400 and db.list_requests(env.conn)[0]["status"] == "new"
+
+
+def test_create_program_rolls_back_when_request_update_fails(env, client, monkeypatch):
+    rid = db.add_request(env.conn, sheet="MS HRM", university="CLARK UNIVERSITY")
+
+    def fail(*_, **__):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(api.db, "set_request_status", fail)
+    try:
+        assert client.post("/api/programs", headers=auth(env),
+                           json={"sheet": "MS HRM", "university": "CLARK", "request_id": rid}).status_code == 500
+    except RuntimeError:
+        pass  # propagated by the test client
+    assert env.conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 1
 
 
 def test_publish_succeeds_when_rebuild_unavailable(env, client, no_rebuild, monkeypatch):
@@ -195,6 +234,48 @@ def test_public_request_needs_university(env, client):
     r = client.post("/request", data=form(university="  "))
     assert r.status_code == 400 and "required" in r.get_data(as_text=True)
     assert db.list_requests(env.conn) == []
+
+
+def test_public_request_413_on_oversized_body(env, client):
+    r = client.post("/request", data=form(note="x" * 20 * 1024))
+    assert r.status_code == 413 and db.list_requests(env.conn) == []
+
+
+def test_public_request_cleans_fields(env, client):
+    client.post("/request", data=form(university="CLARK\x00\x1b UNIVERSITY", note="a\nb", link="javascript:alert(1)"))
+    client.post("/request", data=form(university="GWU", link="HTTPS://gwu.edu/x"))
+    assert [(q["university"], q["note"], q["link"]) for q in db.list_requests(env.conn)] == \
+        [("CLARK UNIVERSITY", "a b", ""), ("GWU", "", "HTTPS://gwu.edu/x")]
+
+
+def post_from(client, n, remote, xff=None):
+    headers = {"X-Forwarded-For": xff} if xff else {}
+    return [client.post("/request", data=form(), headers=headers, environ_base={"REMOTE_ADDR": remote}).status_code
+            for _ in range(n)]
+
+
+def test_rate_limit_ignores_forwarded_for_by_default(env, client):
+    for i in range(5):
+        post_from(client, 1, "10.0.0.1", xff=f"1.1.1.{i}")
+    assert post_from(client, 1, "10.0.0.1", xff="9.9.9.9") == [429]
+
+
+def test_rate_limit_trusts_n_proxies(env, client, monkeypatch):
+    monkeypatch.setenv("PROD_TRUSTED_PROXIES", "1")
+    assert post_from(client, 5, "10.0.0.1", xff="1.1.1.1") == [302] * 5
+    assert post_from(client, 1, "10.0.0.1", xff="1.1.1.1") == [429]
+    assert post_from(client, 1, "10.0.0.1", xff="1.1.1.1, 2.2.2.2") == [302]  # rightmost is what the proxy saw
+    assert post_from(client, 1, "10.0.0.1", xff="2.2.2.2, 1.1.1.1") == [429]  # a spoofed left entry is ignored
+
+
+def test_rate_limit_keys_ipv6_by_64_and_sweeps(env, client, monkeypatch):
+    assert post_from(client, 5, "2001:db8::1") == [302] * 5
+    assert post_from(client, 1, "2001:db8::ffff") == [429]
+    assert post_from(client, 1, "2001:db8:0:1::1") == [302]
+    monkeypatch.setattr(api, "MAX_HIT_KEYS", 2)
+    api._hits.update({f"stale{i}": [0.0] for i in range(5)})
+    post_from(client, 1, "10.0.0.9")
+    assert not any(k.startswith("stale") for k in api._hits) and "10.0.0.9" in api._hits
 
 
 def test_503_without_prod_db(env, client, monkeypatch):
