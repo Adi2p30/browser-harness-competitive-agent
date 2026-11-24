@@ -2,6 +2,19 @@
 
 What changed to improve the pipeline, one entry per commit, newest first.
 
+## 2026-11-24: A production database to replace the workbook as the source of truth
+
+The workbook identifies a school by its sheet and row number, so sorting or inserting rows detaches every run, review
+and source quote from the school it belongs to, and nothing records who changed a value or what it was before. The new
+`agent-workspace/prod/` package is the start of a production database that the hosted site will own: every program
+gets a permanent id (keeping its old "sheet:row" as `legacy_key`), each fact keeps its value, status, cycle, source,
+quote and origin, and every change is kept in a history table. Admins will publish batches of changes; each change
+names the value it started from and is applied only if that value is still current, so several admins can publish at
+once and only real clashes come back as conflicts, with who changed the value and when. Each publish is one
+transaction after a backup (the newest 50 are kept). Admin keys are stored only as hashes and managed with
+`python -m prod.admins add|list|revoke|rotate`. Nothing uses the database yet; the importer, exporter, server API and
+admin client follow.
+
 ## 2026-11-24: Maintainers can add schools that aren't in the workbook
 
 A competitor missing from the workbook could not be researched at all, and typing its name into the web app's school
