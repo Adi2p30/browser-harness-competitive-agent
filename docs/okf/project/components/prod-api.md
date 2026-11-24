@@ -12,16 +12,17 @@ status: draft
 `webapp/api.py` is a Flask blueprint that `app.py` registers. It serves
 [prod.db](prod-db.md) over JSON. Each request opens its own connection.
 
-The hosted app must run in public mode (Step 8). Until then, `app.py` also serves `/run`,
-`/health` and `/review`, which have no login, so do not expose it as is.
+The hosted app runs in public mode (`APP_MODE=public`, set by `deploy/serve.py`), which registers no
+`/run`, `/health`, `/review` or `/admin` route; `serve.py` refuses to start if one exists. The admin app
+registers this blueprint too, for local testing.
 
 Config is read from the environment on every request:
 
 - `PROD_DB`: the database path. Without it, `/api/*` and `/request` answer 503 and the rest of
   the app still works.
 - `PROD_BACKUP_DIR`: where publishes back up first. The default is `<PROD_DB dir>/backups`.
-- `KNOWLEDGE_DIR`: the knowledge bundle to rebuild. It must be the folder the site's
-  `/knowledge` pages read, `<repo>/docs/okf/knowledge`, which is the default.
+- `KNOWLEDGE_DIR`: the knowledge bundle to rebuild. The site's `/knowledge` pages read the same
+  variable, so they serve what was rebuilt. The default is `<repo>/docs/okf/knowledge`.
   `write_from_db` refuses a path that doesn't end in `docs/okf/knowledge`.
 - `PROD_TEMPLATE`: the template workbook. The default is the repo root's
   `EDIT Competitive Analysis Research*.xlsx`, found the way `app.py` finds it.

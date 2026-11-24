@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 THREADS = 4
 OFF = ("", "0", "false", "no", "off")
-ADMIN_ROUTES = ("/run", "/health", "/review")  # no login; public mode must remove them
+ADMIN_ROUTES = ("/run", "/health", "/review", "/admin")  # no login; public mode never registers them
 
 
 def _loopback(host: str) -> bool:
@@ -48,8 +48,8 @@ def check_public(app) -> None:
     """Raises SystemExit while the app still has a login-free admin route."""
     admin = sorted({r.rule for r in app.url_map.iter_rules() if r.rule.startswith(ADMIN_ROUTES)})
     if admin:
-        raise SystemExit("serve: the app still serves admin routes without a login (" + ", ".join(admin) + "). "
-                         "It must honour APP_MODE=public (Step 8) before it is hosted.")
+        raise SystemExit("serve: the app serves admin routes without a login (" + ", ".join(admin) + "); "
+                         "it must be created with APP_MODE=public.")
 
 
 def load_app():

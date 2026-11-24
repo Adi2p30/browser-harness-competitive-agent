@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Add a program{% endblock %}
+{% block content %}
+<h1>Add a program</h1>
+<p>Creates the program in production, where it gets an id. Pull, then research it with the pipeline.</p>
+{% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
+{% if error %}<p class="warn">{{ error }}</p>{% endif %}
+<form method="post" action="{{ url_for('prod.program_new') }}" class="run-form">{{ csrf_field() }}
+  <fieldset>
+    <legend>Program</legend>
+    <label>Program sheet
+      {% if sheets %}
+      <select name="sheet" required>
+        <option value=""></option>
+        {% for s in sheets %}<option{% if form.sheet == s %} selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <input type="text" name="sheet" value="{{ form.sheet }}" required>
+      {% endif %}
+    </label>
+    <label>University <input type="text" name="university" value="{{ form.university }}" required placeholder="e.g. CLARK UNIVERSITY"></label>
+    <label>School / college <input type="text" name="school" value="{{ form.school }}"></label>
+    <label>Program name <input type="text" name="program" value="{{ form.program }}"></label>
+    <label>Website link <input type="text" name="link" value="{{ form.link }}" placeholder="https://"></label>
+  </fieldset>
+  <button type="submit" class="gold">Add program</button>
+</form>
+<p><a href="{{ url_for('prod.requests_inbox') }}">&larr; Requests</a></p>
+{% endblock %}

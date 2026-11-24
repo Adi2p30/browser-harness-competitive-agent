@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Published{% endblock %}
+{% block content %}
+<h1>Published: version {{ res.version }}</h1>
+<p>{{ applied|length }} change{{ "s" if applied|length != 1 }} applied, {{ conflicts|length }}
+  conflict{{ "s" if conflicts|length != 1 }}. {{ pulled }}</p>
+
+{% if conflicts %}
+<h2>Conflicts</h2>
+<p class="warn">Someone changed these fields after your snapshot, so yours were not applied. Check each one, then
+  publish again.</p>
+<div class="table-scroll">
+<table class="decisions">
+  <thead><tr><th>Program</th><th>Field</th><th>Theirs</th><th>Changed by</th><th>When</th><th>Yours</th></tr></thead>
+  <tbody>
+  {% for c in conflicts %}
+    <tr><td>{{ c.program }}</td><td>{{ c.field }}</td><td><strong>{{ c.theirs }}</strong></td><td>{{ c.by }}</td>
+      <td>{{ c.at|replace("T", " ")|replace("Z", "") }}</td><td>{{ c.yours }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if applied %}
+<h2>Applied</h2>
+<div class="table-scroll">
+<table class="decisions">
+  <thead><tr><th>Program</th><th>Field</th><th>Change</th><th>Was</th><th>Now</th></tr></thead>
+  <tbody>
+  {% for r in applied %}
+    <tr><td>{{ r.program }}</td><td>{{ r.field }}</td><td><span class="status change-{{ r.kind|replace(' ', '-') }}">{{ r.kind }}</span></td>
+      <td>{{ r.old }}</td><td>{{ r.new }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+<p><a href="{{ url_for('prod.publish') }}">Back to Publish</a></p>
+{% endblock %}

@@ -7,10 +7,11 @@ systemd service. The examples use the service account `prodsite`, the checkout
 an account with sudo, not `prodsite`. Change the paths to suit, but keep them out of `/home`:
 the service runs with `ProtectHome=true`.
 
-> **Not hostable until public mode lands.** The app still serves `/run`, `/health` and
-> `/review` with no login. `serve.py` sets `APP_MODE=public` and refuses to start while any of
-> those routes exist, so the service fails until the app honours `APP_MODE=public` (Step 8). The
-> proxy examples also forward only `/api/`, `/request`, `/knowledge` and `/static/`.
+**Public mode only.** `serve.py` sets `APP_MODE=public`, so the hosted app serves the knowledge
+pages, `/request`, `/api/*`, `/download.xlsx` and static files, and has no `/run`, `/health`,
+`/review` or `/admin` route. `serve.py` refuses to start if one is registered. Admins research and
+publish from the admin app on their own laptops (step 11). The proxy examples also forward only
+`/api/`, `/request`, `/knowledge`, `/download.xlsx` and `/static/`.
 
 **One process only.** The request limiter and the rebuild lock live in memory. Never run two
 copies, and never put it under a multi-worker server (gunicorn `-w`, several instances behind
@@ -132,8 +133,8 @@ curl -s http://127.0.0.1:8000/api/export           # 401 {"error": ...} means it
 
 Then copy `deploy/nginx.conf.example` (or `deploy/apache.conf.example`) into the proxy's
 config, fill in `@SERVER_NAME@` and the certificate paths, test it (`nginx -t` or
-`apachectl configtest`) and reload. Both forward only `/api/`, `/request`, `/knowledge` and
-`/static/` to `127.0.0.1:8000`, send `/` to `/knowledge` and refuse everything else. They set
+`apachectl configtest`) and reload. Both forward only `/api/`, `/request`, `/knowledge`,
+`/download.xlsx` (the workbook, built from the database) and `/static/` to `127.0.0.1:8000`, send `/` to `/knowledge` and refuse everything else. They set
 `X-Forwarded-For` (hence `PROD_TRUSTED_PROXIES=1`), cap request bodies at 64 KB, and allow
 32 MB and 300 s for `/api/publish`. Keep port 8000 closed to the outside.
 
@@ -195,5 +196,7 @@ PROD_URL=https://<server name>
 PROD_ADMIN_KEY=<the key from step 6>
 ```
 
-Then run `$PY -m prod.client pull|diff|publish|requests …` from `agent-workspace/`, with the
-laptop `$PY` from step 5. See `docs/okf/project/components/prod-client.md`.
+Then start the admin app with `./run-webapp.sh` (it listens on `127.0.0.1:5000` only): its
+Requests and Publish pages work the server's requests, add programs and publish. Or run
+`$PY -m prod.client pull|diff|publish|requests …` from `agent-workspace/`, with the laptop `$PY`
+from step 5. See `docs/okf/project/components/prod-client.md`.

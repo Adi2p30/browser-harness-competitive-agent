@@ -6,7 +6,7 @@
 <p>
   Status: <span id="run-status" class="status {{ run.status }}">{{ run.status }}</span>
   {% if run.status == "running" %}
-  <form method="post" action="{{ url_for('run_stop', run_id=run.id) }}" class="inline">
+  <form method="post" action="{{ url_for('admin.run_stop', run_id=run.id) }}" class="inline">{{ csrf_field() }}
     <button type="submit" class="stop">Stop</button>
   </form>
   {% endif %}

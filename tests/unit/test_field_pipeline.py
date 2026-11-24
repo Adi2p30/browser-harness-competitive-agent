@@ -293,6 +293,14 @@ def test_prior_record_match():
     assert prior_record(prior, Row("Online MBA", 5, "BOSTON COLLEGE", "Hybrid MBA", "", [])) is None
 
 
+def test_rows_not_in_production_leave_out_note_rows():
+    from field_pipeline.__main__ import not_in_production
+    from field_pipeline.workbook import Row
+    rows = [Row("Online MBA", 2, "BOSTON COLLEGE", "", "", []), Row("Online MBA", 3, "CLARK UNIVERSITY", "", "", []),
+            Row("Online MBA", 9, "Colleges not ranked by U.S. News", "", "", []), Row("Online MBA", 10, "2", "", "", [])]
+    assert [r.row for r in not_in_production(rows, {("Online MBA", 2)})] == [3]
+
+
 def test_html_to_page_profile_numbers():
     html = """<title>Class Profile</title>
     <table><thead><tr><th></th><th>MSF</th><th>MSBA</th></tr></thead>

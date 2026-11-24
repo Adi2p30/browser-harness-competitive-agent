@@ -5,7 +5,7 @@
 
 {% if form_error %}
 <p class="warn"><strong>{{ form_error }}</strong> Pick a program that school is on, or remove the school filter.
-  A competitor that isn't listed yet has to be added by an admin first (<code>prod.client add-program</code>).</p>
+  A competitor that isn't listed yet has to be added first: <a href="{{ url_for('prod.program_new') }}">Add a program</a>, then pull.</p>
 {% endif %}
 
 {% if rcac_warning %}
@@ -19,7 +19,7 @@
 {% if not xlsx %}
 <p class="warn">No <code>EDIT Competitive Analysis Research*.xlsx</code> workbook found in the repo root.</p>
 {% else %}
-<form method="post" action="{{ url_for('run_start') }}" class="run-form">
+<form method="post" action="{{ url_for('admin.run_start') }}" class="run-form">{{ csrf_field() }}
   <p class="workbook">Workbook: <code>{{ xlsx.name }}</code></p>
 
   <fieldset class="picker" data-name="sheet">
@@ -76,7 +76,7 @@
 <h2>Running now</h2>
 <ul class="run-list">
   {% for r in running %}
-  <li><a href="{{ url_for('run_view', run_id=r.id) }}">{{ r.id }}</a> — <span class="status running">running</span></li>
+  <li><a href="{{ url_for('admin.run_view', run_id=r.id) }}">{{ r.id }}</a> — <span class="status running">running</span></li>
   {% endfor %}
 </ul>
 {% endif %}
@@ -85,7 +85,7 @@
 <h2>Past runs this session</h2>
 <ul class="run-list">
   {% for r in runs if r.status != "running" %}
-  <li><a href="{{ url_for('run_view', run_id=r.id) }}">{{ r.id }}</a> — <span class="status {{ r.status }}">{{ r.status }}</span></li>
+  <li><a href="{{ url_for('admin.run_view', run_id=r.id) }}">{{ r.id }}</a> — <span class="status {{ r.status }}">{{ r.status }}</span></li>
   {% endfor %}
 </ul>
 {% endif %}

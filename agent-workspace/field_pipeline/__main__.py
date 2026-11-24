@@ -266,6 +266,13 @@ def record_run(out_dir: Path, started: float, status: str, args, summary: dict) 
     append_csv(out_dir.parent.parent / "runs.csv", RUN_COLUMNS, [dict(zip(RUN_COLUMNS, values))])
 
 
+def not_in_production(workbook_rows: list, used: set) -> list:
+    """The workbook's schools a snapshot run leaves out: rows not in `used` ((sheet, row) pairs), less the sheets'
+    note and caption rows ("Colleges not ranked…"), which knowledge_base's JUNK rule never counts as schools."""
+    from knowledge_base.__main__ import JUNK  # knowledge_base imports field_pipeline, not the reverse
+    return [r for r in workbook_rows if (r.sheet, r.row) not in used and not JUNK.fullmatch(r.university)]
+
+
 def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
     discoverer = Discoverer(store, fetcher, per_group=args.per_group, use_search=not args.no_search)
     today = date.today().isoformat()
@@ -281,7 +288,7 @@ def run(args, src: Path, out_dir: Path, store: Store, fetcher: Fetcher) -> dict:
     columns, rows = read_rows(str(src), args.sheet, snap)
     if snap is not None:
         used = {(r.sheet, r.row) for r in rows}
-        if skipped := [r for r in read_rows(str(src), args.sheet)[1] if (r.sheet, r.row) not in used]:
+        if skipped := not_in_production(read_rows(str(src), args.sheet)[1], used):
             log.info("%d workbook row(s) not in production skipped (the workbook is only a template now; add a "
                      "program with python -m prod.client add-program): %s", len(skipped),
                      [f"{r.sheet}:{r.row} {r.university}" for r in skipped[:5]])
