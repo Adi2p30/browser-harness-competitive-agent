@@ -72,9 +72,14 @@ Keep values that contain spaces in double quotes: cron sources this file with th
 
 ## 5. First-time data
 
-The commands in steps 5 and 6 run from `agent-workspace/` with this shorthand: on the server
-`PY=/srv/prod-site/venv/bin/python`, and on a laptop
-`PY="uv run --no-project --with-requirements ../deploy/requirements.txt python"`.
+The commands in steps 5 and 6 run from `agent-workspace/` with a `$PY` shorthand. On a laptop
+it is `PY="uv run --no-project --with-requirements ../deploy/requirements.txt python"`. On the
+server, `data/` and `backups/` are mode 750, so open a shell as `prodsite` first:
+
+```bash
+sudo -u prodsite -s
+cd /srv/prod-site/repo/agent-workspace && PY=/srv/prod-site/venv/bin/python
+```
 
 The first import must run on an admin laptop that has the research. The server's clone has the
 workbooks, but not the pipeline runs or `reviews.csv` in `<workbook>_field_pipeline/`, which git
@@ -94,7 +99,7 @@ Then on the server:
 sudo install -o prodsite -g prodsite -m 600 /tmp/prod.sqlite /srv/prod-site/data/ && rm /tmp/prod.sqlite
 ```
 
-Build the knowledge pages once (afterwards each publish rebuilds them), on the server as `prodsite`:
+Build the knowledge pages once (afterwards each publish rebuilds them), in the server's `prodsite` shell:
 
 ```bash
 set -a; . /etc/prod-public.env; set +a
@@ -103,7 +108,7 @@ $PY -c 'import os; from knowledge_base.from_db import write_from_db; write_from_
 
 ## 6. Admin keys
 
-On the server as `prodsite`, one per admin:
+In the server's `prodsite` shell, one per admin:
 
 ```bash
 $PY -m prod.admins add /srv/prod-site/data/prod.sqlite <name>     # prints the key once
@@ -135,7 +140,7 @@ config, fill in `@SERVER_NAME@` and the certificate paths, test it (`nginx -t` o
 ## 8. Nightly backup
 
 `deploy/backup.sh` copies the live database to `$PROD_BACKUP_DIR/nightly/prod-YYYYmmdd.sqlite`,
-keeps the newest 30 and prints nothing unless it fails. `crontab -e` as `prodsite`:
+keeps the newest 30 and prints nothing unless it fails. Add it with `sudo -u prodsite crontab -e`:
 
 ```cron
 15 3 * * * set -a; . /etc/prod-public.env; set +a; /srv/prod-site/repo/deploy/backup.sh
@@ -145,21 +150,22 @@ Copy the backups off the server too.
 
 ## 9. Restore
 
-Pick a nightly copy or a pre-publish one (`$PROD_BACKUP_DIR/prod-v<version>-<time>.sqlite`).
+Pick a nightly copy or a pre-publish one (`prod-v<version>-<time>.sqlite`).
 Everything since that backup is lost: publishes, school requests, and admin key changes.
 
 ```bash
+sudo -u prodsite ls /srv/prod-site/backups /srv/prod-site/backups/nightly
 sudo systemctl stop prod-public
 sudo -u prodsite sqlite3 'file:/srv/prod-site/backups/nightly/prod-YYYYmmdd.sqlite?immutable=1' 'PRAGMA integrity_check'   # expect: ok
-cd /srv/prod-site/data && R=replaced-$(date +%Y%m%d-%H%M%S) && sudo -u prodsite mkdir "$R"
-sudo -u prodsite mv prod.sqlite* "$R"/             # the database with its -wal and -shm files
-sudo -u prodsite cp /srv/prod-site/backups/nightly/prod-YYYYmmdd.sqlite prod.sqlite
+# Move the database (with its -wal and -shm files) aside and copy the backup in, as prodsite in one shell.
+sudo -u prodsite sh -ec 'cd /srv/prod-site/data; R=replaced-$(date +%Y%m%d-%H%M%S); mkdir "$R"; mv prod.sqlite* "$R"/; cp "$1" prod.sqlite' _ /srv/prod-site/backups/nightly/prod-YYYYmmdd.sqlite
 sudo systemctl start prod-public
 ```
 
-Then run `$PY -m prod.admins list /srv/prod-site/data/prod.sqlite`. Revoke or rotate again any
-key that was revoked or rotated after the backup, because the restore brought the old key back.
-Rebuild the knowledge pages as in step 5. Admins `pull` before their next publish.
+Then, in a `prodsite` shell as in step 5, run
+`$PY -m prod.admins list /srv/prod-site/data/prod.sqlite`. Revoke or rotate again any key that
+was revoked or rotated after the backup, because the restore brought the old key back. Rebuild
+the knowledge pages as in step 5. Admins `pull` before their next publish.
 
 ## 10. Update
 
