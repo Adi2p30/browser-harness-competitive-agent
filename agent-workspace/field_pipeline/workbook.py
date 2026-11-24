@@ -1,15 +1,21 @@
-"""Read program rows from the workbook and write results to a copy (formatting kept, only target cells touched).
+"""The programs a run works on, and writing results to a copy of the workbook (formatting kept, only target cells
+touched).
 
-Schools added by a maintainer (add_school, field_pipeline.schools) live in "<workbook>.added_schools.csv" next to the workbook, never in
-the workbook file itself. read_rows merges them into their sheet as rows numbered from ADDED_FIRST_ROW (10001, far
-past any sheet's own rows, and fixed for good), so runs, reviews and the knowledge base treat them like any other
-row. write() puts an added school into the output copy as a real row under the sheet's last school.
+With the admin's production snapshot (`python -m prod.client pull` saves it to
+<workbook>_field_pipeline/prod-snapshot.json) the programs are production's active ones, each identified by its
+permanent program id; the workbook is then only the template for each sheet's columns. Without one they are the
+workbook's rows, identified by "sheet:row" (a production program's legacy_key). Every results file, review and
+knowledge-base build refers to a program by that `ref`.
+
+Schools a maintainer added before production existed live in "<workbook>.added_schools.csv" next to the workbook.
+read_rows merges them into their sheet as rows numbered from ADDED_FIRST_ROW (10001, fixed for good), and write()
+puts one into the output copy as a real row under the sheet's last school. New programs are added with
+`python -m prod.client add-program`.
 """
 import csv
+import json
 import re
-import threading
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -22,15 +28,25 @@ AUTHOR = "field-pipeline"
 @dataclass
 class Row:
     sheet: str
-    row: int              # 1-based Excel row
+    row: int | None       # 1-based Excel row in the workbook; None for a production program not in it
     university: str
     program: str
     start_url: str
-    blanks: list[str]     # columns that are empty in the workbook
+    blanks: list[str]     # columns to research: empty in the workbook, or with no current production fact
+    program_id: int | None = None  # production id (snapshot runs only)
+    school: str = ""      # from production (snapshot runs only)
 
     @property
     def key(self) -> str:
+        """The row's key in pipeline.sqlite."""
+        if self.program_id is not None:
+            return f"p{self.program_id}"
         return f"{self.sheet}::{self.row}::{self.university}::{self.program}"
+
+    @property
+    def ref(self) -> int | str:
+        """The program id with a snapshot, else "sheet:row"."""
+        return self.program_id if self.program_id is not None else f"{self.sheet}:{self.row}"
 
 
 def _blank(v) -> bool:
@@ -41,11 +57,65 @@ def headers(ws) -> list[str]:
     return [" ".join(str(c.value).split()) if c.value is not None else None for c in ws[1]]
 
 
+def snapshot_path(workbook) -> Path:
+    workbook = Path(workbook)
+    return workbook.with_name(f"{workbook.stem}_field_pipeline") / "prod-snapshot.json"
+
+
+def load_snapshot(workbook) -> dict | None:
+    """The admin's local copy of production (prod.client pull), or None before the first pull."""
+    path = snapshot_path(workbook)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def legacy_row(key: str | None) -> int | None:
+    """The workbook row of a legacy_key "sheet:row", else None."""
+    if not key or not (m := re.search(r":(\d+)$", key)):
+        return None
+    return int(m.group(1))
+
+
+def legacy_ids(snapshot: dict | None) -> dict[str, int] | None:
+    """{legacy_key: program id} of a snapshot; None without one."""
+    if snapshot is None:
+        return None
+    return {p["legacy_key"]: p["id"] for p in snapshot["programs"] if p.get("legacy_key")}
+
+
+def ref_of(d: dict, legacy: dict[str, int] | None) -> int | str | None:
+    """The ref (see Row.ref) of a decisions / reviews / recheck row or a knowledge-base program. With a snapshot
+    (legacy = legacy_ids(snapshot)) that is its program_id; a row written before program ids maps by its legacy key
+    "sheet:row", None when no program has it."""
+    key = f"{d['sheet']}:{'' if d.get('row') is None else d['row']}"
+    if legacy is None:
+        return key
+    return int(d["program_id"]) if d.get("program_id") not in (None, "") else legacy.get(key)
+
+
+def append_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
+    """Append rows to a CSV log, first giving a log started before `columns` grew the new columns (blank in its old
+    rows)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        with open(path, newline="", encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            old = None if r.fieldnames == columns else list(r)
+        if old is not None:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, columns, extrasaction="ignore")
+                w.writeheader()
+                w.writerows(old)
+    new = not path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, columns, extrasaction="ignore")
+        if new:
+            w.writeheader()
+        w.writerows(rows)
+
+
 ADDED_FIRST_ROW = 10001
-ADDED_COLUMNS = ["id", "sheet", "university", "school", "program", "website_link", "added_by", "added_at", "removed_at"]
 SCHOOL_COLUMN = re.compile(r"school\s*/\s*college( name)?", re.I)
 PROGRAM_COLUMN = re.compile(r"program name", re.I)
-_added_lock = threading.Lock()
 
 
 def added_path(workbook) -> Path:
@@ -53,14 +123,14 @@ def added_path(workbook) -> Path:
     return workbook.with_name(f"{workbook.stem}.added_schools.csv")
 
 
-def load_added(workbook, include_removed: bool = False) -> list[dict]:
-    """Added schools, oldest first, each with its fixed "row" number."""
+def load_added(workbook) -> list[dict]:
+    """Added schools not removed, oldest first, each with its fixed "row" number."""
     path = added_path(workbook)
     if not path.exists():
         return []
     with open(path, newline="", encoding="utf-8") as f:
         out = [{**e, "row": ADDED_FIRST_ROW + int(e["id"]) - 1} for e in csv.DictReader(f)]
-    return out if include_removed else [e for e in out if not e.get("removed_at")]
+    return [e for e in out if not e.get("removed_at")]
 
 
 def id_values(head: list, entry: dict) -> dict[str, str]:
@@ -84,54 +154,10 @@ def _norm(s) -> str:
     return " ".join(str(s or "").split()).casefold()
 
 
-def add_school(workbook, sheet: str, university: str, school: str = "", program: str = "", website_link: str = "",
-               added_by: str = "") -> dict:
-    """Add a school to a program sheet (in the side file, not the workbook); ValueError when it can't be added."""
-    university, school, program = (" ".join(str(v or "").split()) for v in (university, school, program))
-    website_link = (website_link or "").strip()
-    if not university:
-        raise ValueError("type the university's name")
-    if website_link and not website_link.startswith(("http://", "https://")):
-        raise ValueError("the website link must be a web address (http/https)")
-    cols, rows = read_rows(str(workbook), [sheet])
-    if sheet not in cols:
-        raise ValueError(f"no program sheet named '{sheet}'")
-    university = university.upper()  # the sheets write universities in capitals
-    for r in rows:
-        if _norm(r.university) == _norm(university) and _norm(r.program) == _norm(program):
-            where = f"row {r.row}" if r.row < ADDED_FIRST_ROW else "the added schools"
-            raise ValueError(f"{university}{' (' + program + ')' if program else ''} is already on {sheet} ({where})")
-    with _added_lock:
-        entries = load_added(workbook, include_removed=True)
-        entry = {"id": str(len(entries) + 1), "sheet": sheet, "university": university, "school": school,
-                 "program": program, "website_link": website_link, "added_by": (added_by or "").strip(),
-                 "added_at": datetime.now().isoformat(timespec="seconds"), "removed_at": ""}
-        path = added_path(workbook)
-        new = not path.exists()
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, ADDED_COLUMNS)
-            if new:
-                w.writeheader()
-            w.writerow(entry)
-    return {**entry, "row": ADDED_FIRST_ROW + int(entry["id"]) - 1}
-
-
-def remove_school(workbook, school_id: str) -> dict | None:
-    """Mark an added school removed (its row number stays reserved, its run results stay in the run folders)."""
-    with _added_lock:
-        entries = load_added(workbook, include_removed=True)
-        hit = next((e for e in entries if e["id"] == str(school_id) and not e.get("removed_at")), None)
-        if hit is None:
-            return None
-        hit["removed_at"] = datetime.now().isoformat(timespec="seconds")
-        with open(added_path(workbook), "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, ADDED_COLUMNS, extrasaction="ignore")
-            w.writeheader()
-            w.writerows(entries)
-    return hit
-
-
-def read_rows(path: str, sheets: list[str] | None = None) -> tuple[dict[str, list[str]], list[Row]]:
+def read_rows(path: str, sheets: list[str] | None = None,
+              snapshot: dict | None = None) -> tuple[dict[str, list[str]], list[Row]]:
+    """({sheet: column headers}, programs) of the workbook's program sheets: the workbook's rows, or with a snapshot
+    production's active programs on those sheets (see snapshot_rows)."""
     added = load_added(path)
     wb = load_workbook(path, read_only=True)
     cols, rows = {}, []
@@ -144,20 +170,45 @@ def read_rows(path: str, sheets: list[str] | None = None) -> tuple[dict[str, lis
         cols[ws.title] = head
         web = head.index("Website Link")
         prog = next((i for i, h in enumerate(head) if h and re.fullmatch(r"program name", h, re.I)), 2)
+        mine = []
         for r, values in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             values = list(values) + [None] * (len(head) - len(values))
             if _blank(values[0]):
                 continue
-            rows.append(Row(ws.title, r, str(values[0]).strip(),
+            mine.append(Row(ws.title, r, str(values[0]).strip(),
                             "" if _blank(values[prog]) else str(values[prog]).strip(),
                             "" if _blank(values[web]) else str(values[web]).strip(),
                             [h for h, v in zip(head, values) if h and _blank(v)]))
         for e in (e for e in added if e["sheet"] == ws.title):
             given = id_values(head, e)
-            rows.append(Row(ws.title, e["row"], e["university"], e.get("program") or "", e.get("website_link") or "",
+            mine.append(Row(ws.title, e["row"], e["university"], e.get("program") or "", e.get("website_link") or "",
                             [h for h in head if h and h not in given]))
+        rows += mine if snapshot is None else snapshot_rows(snapshot, ws.title, head, mine)
     wb.close()
     return cols, rows
+
+
+def snapshot_rows(snapshot: dict, sheet: str, head: list, template: list[Row]) -> list[Row]:
+    """The sheet's active production programs, in legacy-row then id order. A program's row is its legacy row when
+    the workbook's row there is the same university (else None: it isn't in the workbook). Its blanks are the
+    columns with no current fact (any origin but prior-year), less the identifying columns it has."""
+    at = {r.row: r.university for r in template}
+    have: dict[int, set[str]] = {}
+    for f in snapshot["facts"]:
+        if f["origin"] != "prior-year":
+            have.setdefault(f["program_id"], set()).add(f["field"])
+    mine = [p for p in snapshot["programs"] if p["active"] and p["sheet"] == sheet]
+    out = []
+    for p in sorted(mine, key=lambda p: (legacy_row(p["legacy_key"]) is None, legacy_row(p["legacy_key"]) or 0,
+                                         p["id"])):
+        row = legacy_row(p["legacy_key"])
+        if row is not None and _norm(at.get(row)) != _norm(p["university"]):
+            row = None
+        filled = have.get(p["id"], set()) | set(id_values(head, {
+            "university": p["university"], "school": p["school"], "program": p["program"], "website_link": p["link"]}))
+        out.append(Row(sheet, row, p["university"], p["program"] or "", p["link"] or "",
+                       [h for h in head if h and h not in filled], p["id"], p["school"] or ""))
+    return out
 
 
 def _last_school_row(ws) -> int:

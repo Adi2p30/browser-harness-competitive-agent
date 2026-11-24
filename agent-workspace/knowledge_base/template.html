@@ -163,6 +163,7 @@ for (const f of KB.facts) {
   if (!byProgram.has(f.p)) byProgram.set(f.p, new Map());
   byProgram.get(f.p).set(f.f, f);
 }
+const programById = new Map(KB.programs.map(p => [p.id, p]));  // ids are production ids with a snapshot
 const sheets = KB.sheets.filter(s => KB.programs.some(p => p.sheet === s.name));
 const fact = (pid, field) => byProgram.get(pid)?.get(field);
 const coverage = p => byProgram.get(p.id)?.size || 0;
@@ -231,7 +232,7 @@ function deltaHtml(x, base, kind) {
 }
 
 function visible() {
-  const ps = state.p.map(id => KB.programs[id]).filter(p => p && p.sheet === state.s && (p.purdue || passes(p)));
+  const ps = state.p.map(id => programById.get(id)).filter(p => p && p.sheet === state.s && (p.purdue || passes(p)));
   const fields = fieldsOf(state.s).filter(f => state.g.includes(f.group) && (!state.e || ps.some(p => fact(p.id, f.name))));
   return { ps, fields };
 }
@@ -299,7 +300,7 @@ $("schools").onchange = e => {
   state.p = e.target.checked ? [...state.p, id] : state.p.filter(x => x !== id);
   render();
 };
-$("clearSchools").onclick = () => { state.p = state.p.filter(id => KB.programs[id].purdue); render(); };
+$("clearSchools").onclick = () => { state.p = state.p.filter(id => programById.get(id)?.purdue); render(); };
 $("groups").onclick = e => {
   const g = e.target.dataset.g; if (!g) return;
   state.g = state.g.includes(g) ? state.g.filter(x => x !== g) : [...state.g, g];

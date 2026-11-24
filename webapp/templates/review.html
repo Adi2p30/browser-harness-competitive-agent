@@ -68,7 +68,7 @@
         <td>{{ r.value }}{% if r.source_url %} <a href="{{ r.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</td>
         <td>{{ r.note }}</td>
         <td><form method="post" action="{{ url_for('review_undo') }}">
-          <input type="hidden" name="id" value="{{ r.sheet }}|{{ r.row }}|{{ r.field }}">
+          <input type="hidden" name="id" value="{{ r.id }}">
           <input type="hidden" name="run" value="{{ run }}">
           {% if sheet %}<input type="hidden" name="sheet" value="{{ sheet }}">{% endif %}
           <button type="submit" class="small ghost">Undo</button></form></td>
@@ -86,7 +86,7 @@
   <article class="review-item" id="{{ i.id }}">
     <header>
       <strong>{{ i.field }}</strong>
-      <span class="who">{{ i.university }}{% if i.program %} · {{ i.program }}{% endif %} · {{ i.sheet }} row {{ i.row }}</span>
+      <span class="who">{{ i.university }}{% if i.program %} · {{ i.program }}{% endif %} · {{ i.sheet }}{% if i.row %} row {{ i.row }}{% endif %}</span>
     </header>
     <dl>
       {% if i.value %}<dt>{{ "Current value" if group == "stale" else "Candidate" }}</dt><dd><strong>{{ i.value }}</strong></dd>{% endif %}

@@ -5,7 +5,7 @@
 
 {% if form_error %}
 <p class="warn"><strong>{{ form_error }}</strong> Pick a program that school is on, or remove the school filter.
-  A competitor that isn't in the workbook yet has to be added by a maintainer first.</p>
+  A competitor that isn't listed yet has to be added by an admin first (<code>prod.client add-program</code>).</p>
 {% endif %}
 
 {% if rcac_warning %}

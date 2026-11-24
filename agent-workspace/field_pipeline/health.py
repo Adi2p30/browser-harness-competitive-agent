@@ -45,6 +45,7 @@ import requests
 from .fetch import HEADERS, OCR_MARK, BrowserUnavailable, Fetcher, clean_url, site
 from .store import DEFAULT_DB, Store
 from .validate import quote_on_page, squash
+from .workbook import load_snapshot
 
 log = logging.getLogger("field_pipeline.health")
 
@@ -196,7 +197,7 @@ def collect(workbook: Path, prior: Path | None, links: bool, sheets: list[str] |
             only: list[str] | None = None) -> list[dict]:
     """Facts with a source URL, from the knowledge base. Last year's workbook links only with `links`."""
     from knowledge_base.__main__ import build, versions  # knowledge_base imports field_pipeline, not the reverse
-    kb = build(str(workbook), str(prior) if prior else None, versions(workbook))
+    kb = build(str(workbook), str(prior) if prior else None, versions(workbook), snapshot=load_snapshot(workbook))
     programs = {p["id"]: p for p in kb["programs"]}
     out = []
     for f in kb["facts"]:
@@ -209,7 +210,8 @@ def collect(workbook: Path, prior: Path | None, links: bool, sheets: list[str] |
             continue
         if only and not any(o.casefold() in p["university"].casefold() for o in only):
             continue
-        out.append({"sheet": p["sheet"], "row": p.get("row"), "university": p["university"], "program": p["program"],
+        out.append({"program_id": p["program_id"], "sheet": p["sheet"], "row": p["row"],
+                    "university": p["university"], "program": p["program"],
                     "field": f["f"], "status": f["s"], "value": f["v"], "url": clean_url(str(f["u"])),
                     "quote": f.get("q") or ""})
     return out
@@ -258,9 +260,9 @@ def setup_logging(out: Path, verbose: bool) -> None:
     logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 
-HEALTH_COLUMNS = ["sheet", "row", "university", "program", "field", "status", "value", "result", "url", "final_url",
-                  "quote", "snippet", "score", "detail"]
-RECHECK_COLUMNS = ["sheet", "row", "university", "program", "field", "result", "url"]
+HEALTH_COLUMNS = ["program_id", "sheet", "row", "university", "program", "field", "status", "value", "result", "url",
+                  "final_url", "quote", "snippet", "score", "detail"]
+RECHECK_COLUMNS = ["program_id", "sheet", "row", "university", "program", "field", "result", "url"]
 
 
 def write_outputs(out: Path, rows: list[dict]) -> list[dict]:
@@ -269,7 +271,8 @@ def write_outputs(out: Path, rows: list[dict]) -> list[dict]:
         w = csv.DictWriter(f, HEALTH_COLUMNS, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
-    recheck = [r for r in rows if r["result"] in FLAGGED and r["status"] in RECHECK and r.get("row")]
+    recheck = [r for r in rows if r["result"] in FLAGGED and r["status"] in RECHECK
+               and (r.get("program_id") is not None or r.get("row"))]  # not schools only in last year's workbook
     with open(out / "recheck.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, RECHECK_COLUMNS, extrasaction="ignore")
         w.writeheader()

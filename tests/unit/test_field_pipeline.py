@@ -421,7 +421,7 @@ def test_version_folders_never_overwrite(tmp_path):
     src = tmp_path / "Book.xlsx"
     a, b = version_dir(src, False), version_dir(src, True)
     assert a != b and a.parent == b.parent == tmp_path / "Book_field_pipeline" / "runs" and b.name.endswith("_fresh")
-    args = Namespace(fresh=False, browser="local", sheet=None, only=None, limit=None)
+    args = Namespace(fresh=False, browser="local", sheet=None, only=None, program=None, limit=None)
     record_run(a, 0, "done", args, {"rows": 2, "written": 5, "tally": {"found": 5}})
     record_run(b, 0, "failed", args, {})
     lines = (tmp_path / "Book_field_pipeline" / "runs.csv").read_text().splitlines()

@@ -96,7 +96,7 @@ def test_decisions_leave_the_queue_and_reach_the_knowledge_base(wb):
     assert (2, "Average Post-Grad Salary") not in facts  # confirmed blank: no value, and out of the queue
 
     done = review.load_reviews(wb)
-    review.append_reviews(wb, [review.undo_review(done[("MS HRM", 3, "Female %")])])
+    review.append_reviews(wb, [review.undo_review(done[("MS HRM:3", "Female %")])])
     assert (3, "Female %") in by_field(queue(wb))
 
 

@@ -6,14 +6,18 @@ status in FILLED (origin pipeline). Values typed into the workbook ("entered") a
 ("prior-year") came in with the import and are never published from here. A review decision "not-published" is
 published as status "not-published" with no value, exactly as the importer writes it. Nothing else is removed.
 
-Local programs match production ones by legacy_key "sheet:row" when the university names agree; a program added
-through the API (no legacy_key) matches by sheet, university and program name when exactly one does.
+The local knowledge base is built as the admin's pipeline sees it: from the saved snapshot
+(<workbook>_field_pipeline/prod-snapshot.json) when there is one, so its programs carry production ids and match
+by id. Otherwise (no snapshot saved yet) local programs match production ones by legacy_key "sheet:row" when the
+university names agree; a program added through the API (no legacy_key) matches by sheet, university and program
+name when exactly one does.
 """
 from collections import defaultdict
 from pathlib import Path
 
 from field_pipeline.fields import FILLED
 from field_pipeline.review import load_reviews
+from field_pipeline.workbook import legacy_ids, load_snapshot, ref_of
 from knowledge_base.__main__ import build, versions
 
 from .importer import find_prior, not_published, origin, runs
@@ -32,7 +36,8 @@ def _norm(s) -> str:
 
 
 def match(programs: list[dict], snapshot: dict) -> tuple[dict, list[dict]]:
-    """({(sheet, row): production id}, unmapped local programs each with a "reason")."""
+    """({local program id: production id}, unmapped local programs each with a "reason")."""
+    active = {p["id"] for p in snapshot["programs"] if p.get("active", 1)}
     by_key = {p["legacy_key"]: p for p in snapshot["programs"] if p.get("legacy_key")}
     keyless = defaultdict(list)
     for p in snapshot["programs"]:
@@ -41,6 +46,9 @@ def match(programs: list[dict], snapshot: dict) -> tuple[dict, list[dict]]:
     ids, unmapped, taken = {}, [], set()
     for p in programs:
         if p["lastYearOnly"]:
+            continue
+        if p.get("program_id") in active:
+            ids[p["id"]] = p["program_id"]
             continue
         if (target := by_key.get(f"{p['sheet']}:{p['row']}")) is not None:
             if _norm(target["university"]) != _norm(p["university"]):
@@ -54,20 +62,23 @@ def match(programs: list[dict], snapshot: dict) -> tuple[dict, list[dict]]:
                 continue
             target = found[0]
         taken.add(target["id"])
-        ids[(p["sheet"], p["row"])] = target["id"]
+        ids[p["id"]] = target["id"]
     return ids, unmapped
 
 
 def compare(workbook: Path, snapshot: dict, prior: Path | None = None) -> tuple[list[dict], list[dict]]:
-    """(changes, unmapped). changes are in prod.db's change format; unmapped are the local programs (with a workbook
-    row) that match no production program, each with a "reason"."""
+    """(changes, unmapped). changes are in prod.db's change format; unmapped are the local programs that match no
+    production program, each with a "reason"."""
     workbook = Path(workbook)
     prior = prior or find_prior(workbook)
     files = versions(workbook)
-    reviews = load_reviews(workbook)
-    kb = build(str(workbook), str(prior) if prior else None, files, reviews)
-    run_of = runs(files)
+    local = load_snapshot(workbook)
+    legacy = legacy_ids(local)
+    reviews = load_reviews(workbook, local)
+    kb = build(str(workbook), str(prior) if prior else None, files, reviews, local)
+    run_of = runs(files, legacy)
     ids, unmapped = match(kb["programs"], snapshot)
+    by_ref = {ref_of(p, legacy): ids[p["id"]] for p in kb["programs"] if p["id"] in ids}
     stored = {(f["program_id"], f["field"]): f for f in snapshot["facts"]}
     hidden = {k: rv for k, rv in reviews.items() if rv["decision"] == "not-published"}
 
@@ -79,18 +90,18 @@ def compare(workbook: Path, snapshot: dict, prior: Path | None = None) -> tuple[
             changes.append({"program_id": pid, "field": field,
                             "old": old and {"value": old["value"], "status": old["status"]}, "new": new})
 
+    programs = {p["id"]: p for p in kb["programs"]}
     for f in kb["facts"]:
-        p = kb["programs"][f["p"]]
-        key = (p["sheet"], p["row"], f["f"])
-        if (pid := ids.get(key[:2])) is None or key in hidden or not (f["s"] == "reviewed" or f["s"] in FILLED):
+        key = (ref_of(programs[f["p"]], legacy), f["f"])
+        if (pid := ids.get(f["p"])) is None or key in hidden or not (f["s"] == "reviewed" or f["s"] in FILLED):
             continue
         o = origin(f["s"])
         offer(pid, f["f"], _new(f["v"], f["s"], f["c"], f["u"], f["q"], o,
                                 run=run_of.get(key) if o == "pipeline" else None,
                                 reviewed_by=reviews[key]["reviewer"] if o == "review" else None))
-    for key, rv in sorted(hidden.items()):
-        if (pid := ids.get(key[:2])) is not None:
-            offer(pid, key[2], not_published(rv))
+    for (ref, field), rv in sorted(hidden.items()):
+        if (pid := by_ref.get(ref)) is not None:
+            offer(pid, field, not_published(rv))
     return changes, unmapped
 
 

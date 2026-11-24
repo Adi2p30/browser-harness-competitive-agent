@@ -39,10 +39,12 @@ Rejecting a value in review does not yet retract it once it is published. The di
 and changes facts. The one removal it sends is a "not-published" decision, so use that one to
 take a value down.
 
-Programs match by `legacy_key` (`sheet:row`) when the university names also agree; a row
-whose production program names another university is left unmatched. A program created with
-`add-program` has no `legacy_key`. It matches the local row with the same sheet, university
-and program name (case and spacing ignored), and only when exactly one active program fits.
+Once a snapshot is saved, the local knowledge base is built from production's programs, so
+every program matches by its id, including ones created with `add-program`. Before the first
+pull, programs match by `legacy_key` (`sheet:row`) when the university names also agree; a row
+whose production program names another university is left unmatched. A program with no
+`legacy_key` then matches the local row with the same sheet, university and program name (case
+and spacing ignored), and only when exactly one active program fits.
 
 A change applies only if the server still holds the value your snapshot showed. Otherwise it
 is a conflict: the client prints both values, who changed the field and when, and exits 3.
@@ -50,7 +52,7 @@ Pull, check the field, and publish again.
 
 School requests: `requests [--status new]`, `claim <id>`, `done <id> [--program ID] [--note]`
 and `reject <id> [--note]`. `add-program --sheet S --university U [--school --program --link
---request ID]` creates a program and marks the request done. Add the school to the workbook
-with the same sheet, university and program name, then pull before the next diff.
+--request ID]` creates a program and marks the request done. Pull, then research it with
+`python -m field_pipeline <workbook> --program <id>`.
 
 Exit codes: 0 ok, 1 error, 3 conflicts. The diff code is in `agent-workspace/prod/diff.py`.

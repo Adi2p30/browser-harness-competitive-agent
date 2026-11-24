@@ -13,7 +13,8 @@ status: draft
 from `agent-workspace/`. It builds the knowledge base the way `python -m knowledge_base` does.
 That means every pipeline version, `reviews.csv`, and the one `OLD *.xlsx` next to the
 workbook unless `--prior` names another. The winning value of each (program, field) becomes
-one fact.
+one fact. The programs are always the workbook's rows, even when a `prod-snapshot.json` sits
+next to it: the import is what assigns the program ids.
 
 - Programs: `legacy_key` is `sheet:row`. Schools only in last year's workbook are imported
   with `active=0` and no key. `link` is the program URL, and `added_by` is `--by` (default

@@ -8,7 +8,9 @@ Each fact is one (program, field) value with its cycle, status, source URL and q
   0 a decision made in the review queue (field_pipeline/review.py; reviews.csv): a person's value wins
   2 a value already typed into this year's workbook
   3 last year's workbook (cycle 2025-2026), matched by school name; schools only in last year's peer set are kept
-Writes <workbook>_kb/kb.sqlite (for queries) and <workbook>_kb/competitive_analysis.html (open in any browser;
+With the admin's production snapshot (field_pipeline.workbook.load_snapshot) the programs are production's active
+ones and a program's id is its production id; without one they are the workbook's rows. Writes
+<workbook>_kb/kb.sqlite (for queries) and <workbook>_kb/competitive_analysis.html (open in any browser;
 the data is embedded, so the file can be shared on its own). No web or LLM calls: it runs in seconds.
 """
 import argparse
@@ -18,6 +20,7 @@ import re
 import sqlite3
 from collections import Counter
 from datetime import date
+from itertools import count
 from pathlib import Path
 
 from field_pipeline.fields import FILLED, LINK, SKIP, field_for, link_target
@@ -26,7 +29,8 @@ from field_pipeline.health import quote_key
 from field_pipeline.review import load_reviews
 from field_pipeline.store import DEFAULT_DB, Store
 from field_pipeline.validate import NUMERIC, to_number
-from field_pipeline.workbook import headers, id_values, load_added, read_rows, read_values
+from field_pipeline.workbook import (headers, id_values, legacy_ids, load_added, load_snapshot, read_rows, read_values,
+                                     ref_of)
 
 from openpyxl import load_workbook
 
@@ -54,7 +58,7 @@ def text(v) -> str:
 
 def current_values(path: str) -> dict[tuple[str, int], dict]:
     """{(sheet, row): {column: value}} for values already typed into this year's workbook, plus the identifying
-    columns of schools a maintainer added (field_pipeline.workbook.add_school)."""
+    columns of the schools in <workbook>.added_schools.csv (field_pipeline.workbook.load_added)."""
     wb = load_workbook(path, read_only=True)
     added = load_added(path)
     out = {}
@@ -77,12 +81,14 @@ def versions(workbook: Path) -> list[Path]:
     return [p for p in [base / "decisions.csv", *sorted(base.glob("runs/*/decisions.csv"))] if p.exists()]
 
 
-def decisions(paths: list[Path]) -> dict[tuple[str, int, str], dict]:
-    """Filled cells; a later file replaces an earlier one's value for the same cell, a blank never does."""
+def decisions(paths: list[Path], legacy: dict[str, int] | None = None) -> dict[tuple[int | str, str], dict]:
+    """Filled cells, keyed (program ref, field) as field_pipeline.workbook.ref_of gives them; a later file replaces an
+    earlier one's value for the same cell, a blank never does."""
     out = {}
     for path in paths:
         with open(path, newline="", encoding="utf-8") as f:
-            out.update({(d["sheet"], int(d["row"]), d["field"]): d for d in csv.DictReader(f) if d["status"] in FILLED})
+            out.update({(ref, d["field"]): d for d in csv.DictReader(f)
+                        if d["status"] in FILLED and (ref := ref_of(d, legacy)) is not None})
     return out
 
 
@@ -117,11 +123,15 @@ def match_prior(univ: str, program: str, recs: list[tuple[str, dict]], used: set
 
 
 def build(workbook: str, prior_path: str | None, decision_files: list[Path],
-          reviews: dict | None = None) -> dict:
-    """reviews: {(sheet, row, field): decision} from the review queue (default: the workbook's reviews.csv)."""
-    reviews = load_reviews(Path(workbook)) if reviews is None else reviews
-    cols, rows = read_rows(workbook)
-    now, found = current_values(workbook), decisions(decision_files)
+          reviews: dict | None = None, snapshot: dict | None = None) -> dict:
+    """reviews: {(program ref, field): decision} from the review queue (default: the workbook's reviews.csv).
+    snapshot: production's programs (None: the workbook's rows; the importer builds that way). Program ids are the
+    production ids with a snapshot, else list positions; schools only in last year's workbook get ids of their own
+    (negative with a snapshot)."""
+    reviews = load_reviews(Path(workbook), snapshot) if reviews is None else reviews
+    cols, rows = read_rows(workbook, snapshot=snapshot)
+    now, found = current_values(workbook), decisions(decision_files, legacy_ids(snapshot))
+    own = count() if snapshot is None else count(-1, -1)
     prior: dict[str, list[tuple[str, dict]]] = {}
     for (sheet, univ), recs in (read_values(prior_path) if prior_path else {}).items():
         if not JUNK.fullmatch(univ):
@@ -179,20 +189,23 @@ def build(workbook: str, prior_path: str | None, decision_files: list[Path],
             if i is not None:
                 used.add(i)
             old = last_year(old_rec)
-            pid = len(programs)
-            programs.append({"id": pid, "sheet": sheet, "row": row.row, "university": row.university, "program": row.program,
-                             "school": school_of(typed) or school_of(old_rec), "url": row.start_url, "purdue": words(row.university) in (["purdue", "university"], ["purdue", "university", "west", "lafayette"]),
+            pid = row.program_id if row.program_id is not None else next(own)
+            programs.append({"id": pid, "program_id": row.program_id, "sheet": sheet, "row": row.row,
+                             "university": row.university, "program": row.program,
+                             "school": row.school or school_of(typed) or school_of(old_rec), "url": row.start_url,
+                             "purdue": words(row.university) in (["purdue", "university"],
+                                                                 ["purdue", "university", "west", "lafayette"]),
                              "lastYearOnly": False})
             values = {}
             for name in names:
                 link = next((text(typed[l]) for l, p in links.items() if p == name and typed.get(l)), "")
-                rv = reviews.get((sheet, row.row, name))
+                rv = reviews.get((row.ref, name))
                 if rv and rv["decision"] != "not-published":  # a person's decision beats every pipeline value
                     values[name] = {"v": rv["value"], "c": "2026-2027", "s": "reviewed", "u": rv["source_url"],
                                     "q": rv["quote"], "d": f"reviewed {rv['at'][:10]}"
                                     + (f" by {rv['reviewer']}" if rv["reviewer"] else "")
                                     + (f": {rv['note']}" if rv["note"] else "")}
-                elif d := found.get((sheet, row.row, name)):
+                elif d := found.get((row.ref, name)):
                     values[name] = {"v": text(d["value"]), "c": d["cycle"] or "2026-2027", "s": d["status"],
                                     "u": d["source_url"], "q": d["quote"]}
                     if d["status"].startswith("ipeds") or d["status"] == "school-wide":
@@ -205,8 +218,8 @@ def build(workbook: str, prior_path: str | None, decision_files: list[Path],
         for i, (univ, rec) in enumerate(old_recs):  # schools only in last year's peer set
             if i in used or not (values := last_year(rec)):
                 continue
-            pid = len(programs)
-            programs.append({"id": pid, "sheet": sheet, "university": univ.upper(), "program": text(rec.get("Program Name") or ""),
+            pid = next(own)
+            programs.append({"id": pid, "program_id": None, "sheet": sheet, "university": univ.upper(), "program": text(rec.get("Program Name") or ""),
                              "school": school_of(rec), "url": text(rec.get("Website Link") or ""),
                              "purdue": False, "lastYearOnly": True, "row": None})
             add(pid, values)
@@ -271,7 +284,7 @@ def main() -> None:
     out = args.out or wb.with_name(f"{wb.stem}_kb")
     out.mkdir(parents=True, exist_ok=True)
     files = args.decisions or versions(wb)
-    kb = build(str(wb), str(prior) if prior else None, files)
+    kb = build(str(wb), str(prior) if prior else None, files, snapshot=load_snapshot(wb))
     checked = attach_health(kb, args.db or DEFAULT_DB)
     write_sqlite(kb, out / "kb.sqlite")
     page = (Path(__file__).with_name("template.html").read_text(encoding="utf-8")

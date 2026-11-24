@@ -32,6 +32,7 @@ Useful variations:
 | Goal | Add |
 |---|---|
 | Try one or two schools first | `--only "BOSTON COLLEGE" --only DEPAUL` |
+| Only these production programs (needs a snapshot, see below) | `--program 12 --program 40` |
 | First N rows only | `--limit 3` |
 | Several sheets | `--sheet "Online MS Economics" --sheet "Online MSGSCM"` |
 | Every sheet | leave out `--sheet` |
@@ -67,30 +68,27 @@ stops the browser at the end (also on errors and Ctrl-C), because cloud browsers
 
 Expect about 5 minutes per school with the cloud browser.
 
-## Schools that aren't in the workbook (maintainers)
+## Production programs (admins)
 
-Adding a competitor is a maintainer task, done from the command line rather than the web app. Run it from
-`agent-workspace/`:
+Once an admin has pulled the production database's snapshot (`python -m prod.client pull <workbook>`, saved to
+`<workbook>_field_pipeline/prod-snapshot.json`), a run works on production's active programs instead of the
+workbook's rows, and identifies each by its permanent program id. The workbook is then only the template for each
+sheet's columns. Without a snapshot a run uses the workbook's rows, as before, and says so in its log.
 
-```bash
-uv run --with openpyxl python -m field_pipeline.schools "../EDIT Competitive Analysis Research 2026-2027.xlsx" \
-  add --sheet "MS HRM - Residential" --university "Michigan State University" \
-  --school "Eli Broad College of Business" --program "Master of Human Resources and Labor Relations"
-```
+- A program's fields to research are the sheet's columns with no current production fact (last year's values
+  don't count) and that its own school, program name and link don't already fill. `--overwrite` and `--fresh`
+  research the rest too.
+- `--program <id>` (repeatable) researches just those programs; `--sheet` and `--only` still work.
+- A program added with `python -m prod.client add-program` has no workbook row. It is researched like any other,
+  and its results are in `decisions.csv` but not in the run's workbook copy.
+- `decisions.csv`, `reviews.csv` and the health check's `recheck.csv` carry a `program_id` column. Rows written
+  before program ids map to a program by its legacy key (`sheet:row`).
+- The first run with a snapshot moves pipeline.sqlite's stored results from the old row keys to the program ids,
+  so earlier work is still reused.
 
-The other subcommands are `list` and `remove <id>`. A school is saved to
-`EDIT Competitive Analysis Research 2026-2027.added_schools.csv` next to the workbook, never into the workbook
-itself. Commit that file so the team gets the school.
-
-`read_rows` merges each added school into its sheet as a row numbered from 10001, far past any real row and never
-renumbered, so runs, reviews, the knowledge base and the health check treat it like a workbook row. All of its
-fields are blank, so a run researches all of them. With no `--link`, the pipeline searches for the program page.
-When a run writes its output copy of the workbook, an added school it filled becomes a real row under the
-program's last school, ready to copy into the master workbook.
-
-`add` prints the command that researches just the new row: `--row "<sheet>:<row>"` (repeatable). Removing a
-school hides it everywhere, but keeps its row number reserved and its results in the run folders. The same school
-and program can't be added twice, or added when the workbook already has it.
+Schools added earlier with the retired `field_pipeline.schools` command live in
+`<workbook>.added_schools.csv`; the workbook reader still merges them in as rows numbered from 10001, so the
+importer keeps them.
 
 ## Output
 
@@ -247,8 +245,9 @@ uv run --with openpyxl --with beautifulsoup4 --with requests --with pypdf \
   --import "../EDIT Competitive Analysis Research 2026-2027_field_pipeline/review_queue.xlsx" --reviewer "Your Name"
 ```
 
-Decisions are appended to `<workbook>_field_pipeline/reviews.csv`, which is never rewritten, so it doubles as an
-audit log; the newest decision per cell wins. `python -m knowledge_base` uses reviewed values ahead of every
+Decisions are appended to `<workbook>_field_pipeline/reviews.csv`, which keeps every decision, so it doubles as an
+audit log; the newest decision per cell wins. (A file from before program ids is rewritten once, with its rows
+unchanged, to add the `program_id` column; `runs.csv` gains its `programs` column the same way.) `python -m knowledge_base` uses reviewed values ahead of every
 pipeline value, tags them "reviewed", and keeps the source URL and quote, so the monthly check covers them too.
 Reviews don't change the workbook: later pipeline runs still research those cells, but the reviewed value keeps
 winning in the knowledge base.

@@ -24,7 +24,7 @@ import mdlite  # noqa: E402
 from runner import PHASE_LABELS, Run, start_health, start_run, stop_run  # noqa: E402
 from field_pipeline import llm, review  # noqa: E402
 from field_pipeline.store import DEFAULT_DB  # noqa: E402
-from field_pipeline.workbook import read_rows, selection_notes  # noqa: E402
+from field_pipeline.workbook import load_snapshot, read_rows, selection_notes, snapshot_path  # noqa: E402
 from knowledge_base.okf_format import read_concept  # noqa: E402
 
 app = Flask(__name__)
@@ -55,10 +55,11 @@ def _db_for_new_run() -> Path | None:
 
 
 def _workbook_options(xlsx: Path | None) -> tuple[list[str], list[str]]:
-    """(sheet names, distinct university names) for the run form's dropdowns."""
+    """(sheet names, distinct university names) for the run form's dropdowns: production's programs once a
+    snapshot is pulled, else the workbook's rows (as the pipeline picks them)."""
     if not xlsx:
         return [], []
-    cols, rows = read_rows(str(xlsx))
+    cols, rows = read_rows(str(xlsx), snapshot=load_snapshot(xlsx))
     return sorted(cols), sorted({r.university for r in rows if r.university})
 
 
@@ -94,7 +95,7 @@ def run_start():
     sheets_chosen = request.form.getlist("sheet")
     only = [s.strip() for s in request.form.getlist("only") if s.strip()]
     if only:  # the school list holds every sheet's schools: a school may not be on the programs picked
-        match, notes = selection_notes(read_rows(str(xlsx))[1], sheets_chosen, only)
+        match, notes = selection_notes(read_rows(str(xlsx), snapshot=load_snapshot(xlsx))[1], sheets_chosen, only)
         if not match:
             sheets, universities = _workbook_options(xlsx)
             return render_template("index.html", sheets=sheets, universities=universities, xlsx=xlsx,
@@ -208,7 +209,8 @@ def _queue(xlsx: Path, run: str | None) -> dict:
     """The review queue for one run (None = every run), rebuilt only when its inputs change (runs, the workbook,
     reviews, health checks)."""
     base = xlsx.with_name(f"{xlsx.stem}_field_pipeline")
-    inputs = [xlsx, review.reviews_path(xlsx), DEFAULT_DB, *sorted(base.glob("runs/*/decisions.csv"))]
+    inputs = [xlsx, review.reviews_path(xlsx), snapshot_path(xlsx), DEFAULT_DB,
+              *sorted(base.glob("runs/*/decisions.csv"))]
     key = tuple((str(p), p.stat().st_mtime if p.exists() else 0) for p in inputs)
     with _queue_lock:
         if _queue_cache["key"] != key:
@@ -249,8 +251,8 @@ def review_index():
     sheet, q = request.args.get("sheet", ""), request.args.get("q", "").strip().casefold()
     shown = [i for i in items if (not sheet or i["sheet"] == sheet) and (not q or q in i["university"].casefold())]
     counts = Counter(i["group"] for i in shown)
-    reviewed = sorted((r for key, r in review.load_reviews(xlsx).items() if run == "all" or key in result["cells"]),
-                      key=lambda r: r["at"], reverse=True)
+    reviewed = sorted(({**r, "id": review.item_id(*key)} for key, r in result["reviews"].items()
+                       if run == "all" or key in result["cells"]), key=lambda r: r["at"], reverse=True)
     group = request.args.get("group") or next((g for g in review.GROUPS if counts[g]), "candidate")
     return render_template("review.html", xlsx=xlsx, groups=review.GROUPS, choices=review.CHOICES, group=group,
                            counts=counts, items=[i for i in shown if i["group"] == group], total=len(shown),
@@ -282,13 +284,12 @@ def review_decide():
 @app.post("/review/undo")
 def review_undo():
     xlsx = _xlsx()
-    done = review.load_reviews(xlsx) if xlsx else {}
-    sheet, row, field = (request.form.get("id") or "||").split("|", 2)
-    rv = done.get((sheet, int(row or 0), field))
+    done = review.load_reviews(xlsx, load_snapshot(xlsx)) if xlsx else {}
+    rv = next((r for key, r in done.items() if review.item_id(*key) == request.form.get("id")), None)
     if rv:
         review.append_reviews(xlsx, [review.undo_review(rv, request.cookies.get("reviewer", ""))])
     return redirect(url_for("review_index", **_review_args(), group="reviewed",
-                            msg=f"{field} for {rv['university']} is back in the queue" if rv else ""))
+                            msg=f"{rv['field']} for {rv['university']} is back in the queue" if rv else ""))
 
 
 @app.post("/review/name")

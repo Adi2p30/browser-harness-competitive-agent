@@ -16,9 +16,9 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
 
-from field_pipeline.workbook import ADDED_FIRST_ROW, AUTHOR, _blank, _norm, headers, id_values, read_rows, write
+from field_pipeline.workbook import (ADDED_FIRST_ROW, AUTHOR, _blank, _norm, headers, id_values, legacy_row, read_rows,
+                                     write)
 from knowledge_base.__main__ import ID_COLUMNS, JUNK, current_values
-from knowledge_base.from_db import legacy_row
 
 from . import db
 from .values import to_text

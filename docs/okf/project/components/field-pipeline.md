@@ -18,6 +18,13 @@ federal data for a few fields, then [write](/okf/project/stages/write.md) a new 
 workbook. Imports `browser_harness.admin`/`helpers` in-process for local-mode browsing — see
 [browser-harness-core](/okf/project/components/browser-harness-core.md).
 
+Once an admin has pulled production's snapshot (`python -m prod.client pull`), the rows are
+production's active programs, identified by program id (`--program <id>` picks some), and the
+workbook only supplies each sheet's columns. A program's blanks are the columns with no current
+production fact. Without a snapshot the rows are the workbook's, keyed `sheet:row`. Results,
+reviews, recheck rows and the stored page results all follow that key; files from before
+program ids map by legacy key (`agent-workspace/field_pipeline/workbook.py:ref_of`).
+
 Every run writes `decisions.csv` (one row per cell decided) and `run.log`
 (`agent-workspace/field_pipeline/__main__.py:setup_logging`) in the new version folder; the web
 app tails that same log stream live instead of waiting for the run to finish.
